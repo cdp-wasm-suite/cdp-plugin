@@ -1,0 +1,453 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run: verify MPlug token access only, skip all compile jobs (saves CI minutes)'
+        type: boolean
+        default: false
+
+concurrency:
+  # A new run for the same ref (branch/PR) cancels the still-running older one,
+  # so pushing again supersedes the previous build instead of piling up (saves
+  # Actions minutes). Per-ref, so unrelated branches don't cancel each other.
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Dry run — cheap plumbing check, no compile. Trigger with:
+  #   gh workflow run build.yml -f dry_run=true
+  # Runs on the 1x Linux runner and only proves MPLUG_CI_TOKEN can read the
+  # private MPlug repo (the thing most likely to be misconfigured), so you can
+  # validate setup for ~zero minutes before spending on the full matrix.
+  # ---------------------------------------------------------------------------
+  dry-run:
+    name: Dry run (token + config check)
+    if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+    runs-on: ubuntu-24.04
+    steps:
+      # NOTE: deliberately NO actions/checkout here. checkout persists the job's
+      # GITHUB_TOKEN as an http.extraheader in the workspace repo's git config,
+      # which shadows the PAT for any github.com request made from inside that
+      # dir — and GITHUB_TOKEN can't read mplug, giving a false 404. FetchContent
+      # clones mplug into a SEPARATE dir using the global insteadOf PAT, so we
+      # replicate that (clone into RUNNER_TEMP with only the global config).
+      - name: Configure git auth for private dependencies
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Verify MPLUG_CI_TOKEN can fetch the private MPlug repo (as FetchContent does)
+        run: |
+          if [ -z "$MPLUG_CI_TOKEN" ]; then
+            echo "::error::MPLUG_CI_TOKEN is empty — build jobs are disabled until it is set."
+            exit 1
+          fi
+          echo "Token length: ${#MPLUG_CI_TOKEN} chars, prefix: ${MPLUG_CI_TOKEN:0:4}****"
+          echo "Token fingerprint (sha256, first 12): $(printf %s "$MPLUG_CI_TOKEN" | shasum -a 256 | cut -c1-12)"
+          echo "git insteadOf rewrite in effect:"
+          git config --global --get-regexp '^url\.' | sed 's/x-access-token:[^@]*@/x-access-token:***@/'
+          if out=$(git clone --depth 1 --no-checkout --filter=blob:none \
+                     https://github.com/olilarkin/mplug.git "$RUNNER_TEMP/mplug-probe" 2>&1); then
+            echo "✓ MPLUG_CI_TOKEN can fetch olilarkin/mplug — the full build will be able to fetch it."
+          else
+            echo "::error::Could not fetch olilarkin/mplug with MPLUG_CI_TOKEN."
+            echo "git said:"
+            echo "$out"
+            exit 1
+          fi
+        env:
+          MPLUG_CI_TOKEN: ${{ secrets.MPLUG_CI_TOKEN }}
+
+      - name: Show platform gating (which jobs a real run would build)
+        run: |
+          echo "A real run builds a platform unless its CI_<PLATFORM> variable is 'false':"
+          for p in MACOS LINUX WINDOWS WINDOWS_ARM AUV3 IOS VISIONOS WASM; do
+            v="CI_${p}"
+            case "$p" in
+              MACOS)   state="${{ vars.CI_MACOS }}";;
+              LINUX)   state="${{ vars.CI_LINUX }}";;
+              WINDOWS) state="${{ vars.CI_WINDOWS }}";;
+              WINDOWS_ARM) state="${{ vars.CI_WINDOWS_ARM }}";;
+              AUV3)    state="${{ vars.CI_AUV3 }}";;
+              IOS)     state="${{ vars.CI_IOS }}";;
+              VISIONOS) state="${{ vars.CI_VISIONOS }}";;
+              WASM)    state="${{ vars.CI_WASM }}";;
+            esac
+            [ "$state" = "false" ] && echo "  - $v: SKIP" || echo "  - $v: build"
+          done
+
+  # ---------------------------------------------------------------------------
+  # macOS — VST3 / AUv2 / CLAP / App
+  # ---------------------------------------------------------------------------
+  macos:
+    name: macOS
+    # Platform gating: a job runs unless its repo variable is set to 'false'.
+    # Toggle with e.g. `gh variable set CI_MACOS --body false` (no YAML edit).
+    # The second clause skips every compile job during a dry run.
+    if: vars.CI_MACOS != 'false' && (github.event_name != 'workflow_dispatch' || !inputs.dry_run)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      # MPlug (and its mcp-ext-apps submodule) is fetched over git. Rewrite both
+      # the https and git@ forms to use the PAT so private deps and ssh-style
+      # submodules clone without SSH keys.
+      - name: Configure git auth for private dependencies
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Install dependencies
+        run: brew install ninja ccache
+
+      - uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: macos
+          max-size: 2G
+
+      - name: Configure
+        run: >-
+          cmake --preset release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_OBJC_COMPILER_LAUNCHER=ccache
+          -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build --preset release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: cdp-plugin-macos
+          if-no-files-found: ignore
+          path: |
+            build/release/**/*.vst3
+            build/release/**/*.clap
+            build/release/**/*.component
+            build/release/**/*.app
+
+      - name: Install validators
+        run: |
+          set -e
+          curl -sL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
+          unzip -q pluginval.zip
+          curl -sL -o clap-validator.tar.gz https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-macos-universal.tar.gz
+          tar xzf clap-validator.tar.gz
+
+      - name: Validate VST3 (pluginval)
+        run: ./pluginval.app/Contents/MacOS/pluginval --strictness-level 5 --skip-gui-tests --validate build/release/out/cdp-plugin.vst3
+
+      - name: Validate AudioUnit (auval + pluginval)
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R build/release/out/cdp-plugin.component ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -v aumu CDPl oliL
+          ./pluginval.app/Contents/MacOS/pluginval --strictness-level 5 --skip-gui-tests --validate build/release/out/cdp-plugin.component
+
+      - name: Validate CLAP (clap-validator)
+        run: ./binaries/clap-validator validate build/release/out/cdp-plugin.clap
+
+  # ---------------------------------------------------------------------------
+  # Linux — VST3 / CLAP / App
+  # ---------------------------------------------------------------------------
+  linux:
+    name: Linux
+    if: vars.CI_LINUX != 'false' && (github.event_name != 'workflow_dispatch' || !inputs.dry_run)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure git auth for private dependencies
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache \
+            libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: linux
+          max-size: 2G
+
+      - name: Configure
+        run: >-
+          cmake --preset release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build --preset release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: cdp-plugin-linux
+          if-no-files-found: ignore
+          path: |
+            build/release/**/*.vst3
+            build/release/**/*.clap
+            build/release/out/cdp-plugin
+
+      # pluginval's VST3 host reports "0 types found" on Linux (a pluginval
+      # limitation - the same VST3 passes pluginval on macOS/Windows), so VST3
+      # is validated there. Here we validate CLAP.
+      - name: Install validators
+        run: |
+          set -e
+          curl -sL -o clap-validator.tar.gz https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-ubuntu-18.04.tar.gz
+          tar xzf clap-validator.tar.gz
+          chmod +x clap-validator
+
+      - name: Validate CLAP (clap-validator)
+        run: ./clap-validator validate build/release/out/cdp-plugin.clap
+
+  # ---------------------------------------------------------------------------
+  # Windows — VST3 / CLAP / App
+  # ---------------------------------------------------------------------------
+  windows:
+    name: Windows
+    if: vars.CI_WINDOWS != 'false' && (github.event_name != 'workflow_dispatch' || !inputs.dry_run)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure git auth for private dependencies
+        shell: bash
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      # MSVC env so the Ninja generator finds cl.exe. Ninja + sccache gives
+      # cross-run compiler caching, which the VS/MSBuild generator can't use.
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: windows
+          variant: sccache
+          max-size: 2G
+
+      - name: Configure
+        run: >-
+          cmake -B build/windows -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+
+      # Build the shippable formats explicitly (the headless Cli/Python targets
+      # are excluded from the default build in CMakeLists.txt anyway).
+      - name: Build
+        run: cmake --build build/windows --target ComposersDesktopPluginVST3 ComposersDesktopPluginClap ComposersDesktopPluginApp
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: cdp-plugin-windows
+          if-no-files-found: ignore
+          path: |
+            build/windows/**/*.vst3
+            build/windows/**/*.clap
+            build/windows/**/cdp-plugin.exe
+
+      - name: Install validators
+        shell: bash
+        run: |
+          set -e
+          curl -sL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip
+          unzip -q pluginval.zip
+          curl -sL -o clap-validator.zip https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-windows.zip
+          unzip -q clap-validator.zip
+
+      - name: Validate VST3 (pluginval)
+        shell: bash
+        run: ./pluginval.exe --strictness-level 5 --skip-gui-tests --validate build/windows/out/cdp-plugin.vst3
+
+      - name: Validate CLAP (clap-validator)
+        shell: bash
+        run: ./clap-validator.exe validate build/windows/out/cdp-plugin.clap
+
+  # ---------------------------------------------------------------------------
+  # Windows ARM64 / ARM64EC — VST3 / CLAP
+  # Cross-compiled from the x64 runner with the default Visual Studio generator
+  # (-A <arch>). ARM64EC lets the plugin load into x64 hosts on ARM Windows.
+  # ---------------------------------------------------------------------------
+  windows-arm:
+    name: Windows ${{ matrix.arch }}
+    if: vars.CI_WINDOWS_ARM != 'false' && (github.event_name != 'workflow_dispatch' || !inputs.dry_run)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [ARM64, ARM64EC]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure git auth for private dependencies
+        shell: bash
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Configure
+        run: cmake -B build/win-${{ matrix.arch }} -A ${{ matrix.arch }}
+
+      - name: Build
+        run: cmake --build build/win-${{ matrix.arch }} --config Release --target ComposersDesktopPluginVST3 ComposersDesktopPluginClap ComposersDesktopPluginApp
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: cdp-plugin-windows-${{ matrix.arch }}
+          if-no-files-found: ignore
+          path: |
+            build/win-${{ matrix.arch }}/**/*.vst3
+            build/win-${{ matrix.arch }}/**/*.clap
+            build/win-${{ matrix.arch }}/**/cdp-plugin.exe
+
+  # ---------------------------------------------------------------------------
+  # AUv3 app extension (macOS, Xcode generator)
+  # ---------------------------------------------------------------------------
+  auv3:
+    name: AUv3 (macOS)
+    if: vars.CI_AUV3 != 'false' && (github.event_name != 'workflow_dispatch' || !inputs.dry_run)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure git auth for private dependencies
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Configure
+        run: cmake --preset xcode
+
+      - name: Build
+        run: >-
+          xcodebuild -project build/xcode/ComposersDesktopPlugin.xcodeproj
+          -scheme ALL_BUILD
+          -destination 'generic/platform=macOS'
+          CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+          build
+
+  # ---------------------------------------------------------------------------
+  # iOS AUv3 app extension (Xcode generator). Only AUv3 applies on iOS, so the
+  # template builds just that target there (no desktop formats / code signing).
+  # ---------------------------------------------------------------------------
+  ios:
+    name: iOS (AUv3)
+    if: vars.CI_IOS != 'false' && (github.event_name != 'workflow_dispatch' || !inputs.dry_run)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure git auth for private dependencies
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Configure
+        run: cmake --preset ios
+
+      - name: Build AUv3 extension
+        run: >-
+          xcodebuild -project build/ios/ComposersDesktopPlugin.xcodeproj
+          -target ComposersDesktopPluginAUv3Extension
+          -configuration Release
+          -destination 'generic/platform=iOS'
+          CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+          build
+
+  # ---------------------------------------------------------------------------
+  # visionOS AUv3 app extension (Xcode generator).
+  # ---------------------------------------------------------------------------
+  visionos:
+    name: visionOS (AUv3)
+    if: vars.CI_VISIONOS != 'false' && (github.event_name != 'workflow_dispatch' || !inputs.dry_run)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure git auth for private dependencies
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Configure
+        run: cmake --preset visionos
+
+      - name: Build AUv3 extension
+        run: >-
+          xcodebuild -project build/visionos/ComposersDesktopPlugin.xcodeproj
+          -target ComposersDesktopPluginAUv3Extension
+          -configuration Release
+          -destination 'generic/platform=visionOS'
+          CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+          build
+
+  # ---------------------------------------------------------------------------
+  # WebAssembly (WCLAP) — the plugin compiled to run in the browser
+  # ---------------------------------------------------------------------------
+  wasm:
+    name: WebAssembly
+    if: vars.CI_WASM != 'false' && (github.event_name != 'workflow_dispatch' || !inputs.dry_run)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure git auth for private dependencies
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v16
+        with:
+          version: 3.1.51
+          actions-cache-folder: emsdk-cache
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build ccache
+
+      - uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: wasm
+          max-size: 2G
+
+      - name: Configure
+        run: >-
+          emcmake cmake -B build/wasm -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DMPLUG_BUILD_WCLAP=ON
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build/wasm
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: cdp-plugin-wasm
+          if-no-files-found: ignore
+          path: |
+            build/wasm/**/*.wclap
+            build/wasm/**/*.wasm

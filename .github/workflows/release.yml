@@ -1,0 +1,351 @@
+name: Release
+
+# Builds the release artifacts and attaches them to the GitHub Release for the
+# pushed tag:
+#   macos    — plugins + app, Developer ID codesigned (hardened runtime),
+#              notarized (notarytool) and stapled, shipped as a DMG
+#   windows  — VST3 / CLAP / App zips for x64, ARM64 and ARM64EC (unsigned)
+#   wasm     — the WCLAP (WebAssembly CLAP) zip (disabled by default; gated
+#              behind the CI_WASM repo variable, set to 'false' here)
+# Each job creates the Release if it doesn't exist yet (`gh release create ||
+# true`), so job completion order doesn't matter.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   MPLUG_CI_TOKEN              PAT with read access to the private mplug repo
+#   DEVELOPER_ID_APPLICATION    "Developer ID Application: NAME (TEAMID)"
+#   BUILD_CERTIFICATE_BASE64    base64 of the Developer ID Application .p12
+#   P12_PASSWORD               password for that .p12
+#   KEYCHAIN_PASSWORD          any string; password for the temporary keychain
+#   NOTARY_KEY_BASE64          base64 of the App Store Connect API key (.p8)
+#   NOTARY_KEY_ID              the API key's Key ID
+#   NOTARY_ISSUER_ID           the API key's Issuer ID
+#
+# Create the .p12 from your "Developer ID Application" cert in Keychain Access
+# (export as .p12), then: base64 -i cert.p12 | pbcopy. Create the API key at
+# App Store Connect -> Users and Access -> Integrations -> App Store Connect API
+# (role: Developer); base64 -i AuthKey_XXXX.p8 | pbcopy.
+#
+# (notarytool also supports Apple ID + app-specific password instead of an API
+# key: --apple-id / --password / --team-id. Apple recommends the API key.)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  # Per-ref: a new run supersedes an older one for the SAME ref. Tag releases
+  # each get a unique ref group (release-refs/tags/vX.Y.Z), so a real release is
+  # never cancelled by other work — this only supersedes repeated dispatch
+  # builds on the same branch (which saves Actions minutes).
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+# Allow the built-in GITHUB_TOKEN to create the Release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+  # Guard: a tagged release must match the single source of truth
+  # (CMakeLists PROJECT_VERSION). Fails fast so we never ship bundles whose
+  # embedded version disagrees with the tag / Release / installer.
+  preflight:
+    name: Version check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tag must equal PROJECT_VERSION
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          PV=$(grep -oE 'VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1 \
+                 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "PROJECT_VERSION=$PV   tag=$GITHUB_REF_NAME (-> $TAG)"
+          if [ "$PV" != "$TAG" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match CMakeLists PROJECT_VERSION $PV — run scripts/release.sh $PV to bump+tag consistently."
+            exit 1
+          fi
+
+  macos:
+    name: macOS (signed + notarized)
+    needs: preflight
+    runs-on: macos-15
+    env:
+      DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+      BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+      P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_BASE64 }}
+      NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+      NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check signing secrets
+        run: |
+          missing=
+          for v in DEVELOPER_ID_APPLICATION BUILD_CERTIFICATE_BASE64 P12_PASSWORD \
+                   KEYCHAIN_PASSWORD NOTARY_KEY_BASE64 NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+            [ -z "${!v}" ] && missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing release secrets:$missing - see release.yml header."
+            exit 1
+          fi
+
+      - name: Configure git auth for private dependencies
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Install dependencies
+        run: brew install ninja
+
+      - name: Build
+        run: |
+          cmake --preset release
+          cmake --build --preset release
+
+      - name: Import Developer ID certificate into a temporary keychain
+        run: |
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+      # Diagnostic: what signing identities did the .p12 actually provide?
+      # If this prints a readable cert name, DEVELOPER_ID_APPLICATION doesn't
+      # match it (matching text would be masked as *** in the log). "0 valid
+      # identities" with a hash listed means the cert chain didn't validate.
+      - name: List signing identities in the temp keychain
+        run: security find-identity -v -p codesigning "$RUNNER_TEMP/app-signing.keychain-db"
+
+      - name: Codesign (Developer ID, hardened runtime)
+        run: |
+          cd build/release/out
+          # Plugins: hardened runtime + secure timestamp, no extra entitlements.
+          for plug in cdp-plugin.vst3 cdp-plugin.component cdp-plugin.clap; do
+            codesign --force --options runtime --timestamp \
+              --sign "$DEVELOPER_ID_APPLICATION" "$plug"
+          done
+          # App: same, plus the hardened-runtime entitlements.
+          codesign --force --options runtime --timestamp \
+            --entitlements "$GITHUB_WORKSPACE/resources/entitlements.mac.plist" \
+            --sign "$DEVELOPER_ID_APPLICATION" cdp-plugin.app
+          for item in cdp-plugin.vst3 cdp-plugin.component cdp-plugin.clap cdp-plugin.app; do
+            codesign --verify --strict --verbose=2 "$item"
+          done
+
+      - name: Notarize and staple the bundles
+        run: |
+          KEY_PATH="$RUNNER_TEMP/notary.p8"
+          echo -n "$NOTARY_KEY_BASE64" | base64 --decode -o "$KEY_PATH"
+          cd build/release/out
+          # notarytool needs a container, so submit all the signed bundles in one
+          # zip; then staple each original bundle (same cdhash that was notarized)
+          # so the plugins/app pass Gatekeeper offline after being copied out.
+          mkdir -p "$RUNNER_TEMP/notarize"
+          cp -R cdp-plugin.vst3 cdp-plugin.component cdp-plugin.clap cdp-plugin.app "$RUNNER_TEMP/notarize/"
+          ditto -c -k --sequesterRsrc "$RUNNER_TEMP/notarize" "$RUNNER_TEMP/bundles.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/bundles.zip" \
+            --key "$KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+            --wait
+          for item in cdp-plugin.vst3 cdp-plugin.component cdp-plugin.clap cdp-plugin.app; do
+            xcrun stapler staple "$item"
+          done
+
+      - name: Build, sign DMG
+        run: |
+          mkdir -p dmg-staging
+          cd build/release/out
+          cp -R cdp-plugin.vst3 cdp-plugin.component cdp-plugin.clap cdp-plugin.app "$GITHUB_WORKSPACE/dmg-staging/"
+          cd "$GITHUB_WORKSPACE"
+          # Drop the readme + license alongside the bundles so they show in the DMG.
+          cp installer/readme-mac.txt dmg-staging/README.txt
+          cp installer/license.txt   dmg-staging/LICENSE.txt
+          hdiutil create -volname "cdp-plugin" -srcfolder dmg-staging -ov -format UDZO cdp-plugin-macOS.dmg
+          codesign --force --timestamp --sign "$DEVELOPER_ID_APPLICATION" cdp-plugin-macOS.dmg
+
+      - name: Notarize and staple the DMG
+        run: |
+          xcrun notarytool submit cdp-plugin-macOS.dmg \
+            --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+            --wait
+          xcrun stapler staple cdp-plugin-macOS.dmg
+          spctl --assess --type open --context context:primary-signature -v cdp-plugin-macOS.dmg
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/app-signing.keychain-db" || true
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cdp-plugin-macOS-dmg
+          path: cdp-plugin-macOS.dmg
+
+      - name: Attach DMG to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" --generate-notes --title "${{ github.ref_name }}" || true
+          gh release upload "${{ github.ref_name }}" cdp-plugin-macOS.dmg --clobber
+
+  # ---------------------------------------------------------------------------
+  # Windows — VST3 / CLAP / App zips per architecture (unsigned; ARM64EC lets
+  # the plugin load into x64 hosts on ARM Windows). Same VS-generator builds
+  # that build.yml validates.
+  # ---------------------------------------------------------------------------
+  windows:
+    name: Windows ${{ matrix.arch }}
+    needs: preflight
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, ARM64, ARM64EC]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure git auth for private dependencies
+        shell: bash
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Configure
+        run: cmake -B build/win-${{ matrix.arch }} -A ${{ matrix.arch }}
+
+      - name: Build
+        run: cmake --build build/win-${{ matrix.arch }} --config Release --target ComposersDesktopPluginVST3 ComposersDesktopPluginClap ComposersDesktopPluginApp
+
+      - name: Package
+        shell: bash
+        run: |
+          cd "build/win-${{ matrix.arch }}/out"
+          ls -la
+          7z a "$GITHUB_WORKSPACE/cdp-plugin-Windows-${{ matrix.arch }}.zip" .
+
+      # Inno Setup installer with a single shared web copy under Common Files.
+      # Skipped for ARM64EC — it has no standalone host; it keeps shipping as a
+      # zip only. (Folding its VST3 slice into the ARM64 installer would need
+      # cross-job artifacts and is a deferred refinement.)
+      - name: Build installer
+        if: matrix.arch != 'ARM64EC'
+        shell: pwsh
+        run: |
+          $arch = '${{ matrix.arch }}'
+          $archTag = if ($arch -eq 'ARM64') { 'arm64' } else { 'x64' }
+          # Version: the tag without a leading 'v'; fall back to the CMakeLists
+          # PROJECT_VERSION for non-tag (workflow_dispatch) runs.
+          $version = '${{ github.ref_name }}' -replace '^v',''
+          if ($version -notmatch '^\d+\.\d+\.\d+') {
+            $m = Select-String -Path CMakeLists.txt -Pattern 'VERSION\s+(\d+\.\d+\.\d+)' |
+                 Select-Object -First 1
+            $version = $m.Matches[0].Groups[1].Value
+          }
+          Write-Host "Building installer: arch=$archTag version=$version"
+          # iscc ships on the windows-latest image; install via choco if absent.
+          $iscc = 'iscc'
+          if (-not (Get-Command $iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+            $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          }
+          $src = "$env:GITHUB_WORKSPACE\build\win-$arch\out"
+          & $iscc "/DAppVersion=$version" "/DArchTag=$archTag" "/DSourceDir=$src" `
+                  "/O$env:GITHUB_WORKSPACE" installer\cdp-plugin.iss
+          if ($LASTEXITCODE -ne 0) { throw "iscc failed with exit code $LASTEXITCODE" }
+          "INSTALLER_NAME=cdp-plugin-setup-$archTag.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cdp-plugin-Windows-${{ matrix.arch }}
+          path: cdp-plugin-Windows-${{ matrix.arch }}.zip
+
+      - name: Upload installer artifact
+        if: matrix.arch != 'ARM64EC'
+        uses: actions/upload-artifact@v7
+        with:
+          name: cdp-plugin-setup-${{ matrix.arch }}
+          path: ${{ env.INSTALLER_NAME }}
+
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" --generate-notes --title "${{ github.ref_name }}" || true
+          gh release upload "${{ github.ref_name }}" "cdp-plugin-Windows-${{ matrix.arch }}.zip" --clobber
+
+      - name: Attach installer to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') && matrix.arch != 'ARM64EC'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.ref_name }}" "$INSTALLER_NAME" --clobber
+
+  # ---------------------------------------------------------------------------
+  # WebAssembly — the WCLAP (browser CLAP) build.
+  # ---------------------------------------------------------------------------
+  wasm:
+    name: WebAssembly (WCLAP)
+    # Platform gating (matches build.yml): the job runs unless CI_WASM is
+    # 'false'. Disabled in this repo — toggle with `gh variable set CI_WASM
+    # --body true` (or delete the variable) to re-enable.
+    if: vars.CI_WASM != 'false'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure git auth for private dependencies
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v16
+        with:
+          version: 3.1.51
+          actions-cache-folder: emsdk-cache
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: >-
+          emcmake cmake -B build/wasm -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DMPLUG_BUILD_WCLAP=ON
+
+      - name: Build
+        run: cmake --build build/wasm
+
+      - name: Package
+        run: |
+          cd build/wasm/out
+          zip -r "$GITHUB_WORKSPACE/cdp-plugin-WCLAP.zip" cdp-plugin.wclap
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cdp-plugin-WCLAP
+          path: cdp-plugin-WCLAP.zip
+
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" --generate-notes --title "${{ github.ref_name }}" || true
+          gh release upload "${{ github.ref_name }}" cdp-plugin-WCLAP.zip --clobber

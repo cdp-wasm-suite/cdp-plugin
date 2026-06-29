@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Repo-level override of MPlug's default App Info.plist
+  (mplug/cmake/templates/App-Info.plist.in). MPlug configures this file with
+  @ONLY substitution of MPLUG_APP_BUNDLE_NAME / MPLUG_APP_BUNDLE_IDENTIFIER /
+  MPLUG_APP_VERSION (see MPlugApp.cmake). The only change from the stock
+  template is the app icon: we ship an Icon Composer icon (resources/AppIcon.icon)
+  precompiled with actool into resources/mac-icon/{AppIcon.icns, Assets.car},
+  which a POST_BUILD step in CMakeLists.txt copies into Contents/Resources, so the
+  icon keys point at "AppIcon" (CFBundleIconName selects the Liquid Glass icon from
+  Assets.car on macOS 26+; CFBundleIconFile is the .icns fallback for older systems).
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleExecutable</key>
+    <string>@MPLUG_APP_BUNDLE_NAME@</string>
+    <key>CFBundleIdentifier</key>
+    <string>@MPLUG_APP_BUNDLE_IDENTIFIER@</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>@MPLUG_APP_BUNDLE_NAME@</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@MPLUG_APP_VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@MPLUG_APP_VERSION@</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.15</string>
+</dict>
+</plist>

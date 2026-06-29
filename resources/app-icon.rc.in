@@ -1,0 +1,5 @@
+// Windows resource script for the standalone App's executable icon.
+// Configured by CMakeLists.txt (@MY_PLUGIN_ICO_PATH@ -> the absolute path of
+// resources/cdp-plugin.ico). The lowest-numbered ICON resource (1) becomes the
+// icon Explorer / the taskbar show for cdp-plugin.exe.
+1 ICON "@MY_PLUGIN_ICO_PATH@"

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Hardened-runtime exceptions for the standalone app. -->
+
+    <!-- The editor is a WKWebView (JavaScriptCore JIT). -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- The standalone app opens an audio input device. (Also add an
+         NSMicrophoneUsageDescription to the app's Info.plist for the TCC prompt.) -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+</dict>
+</plist>

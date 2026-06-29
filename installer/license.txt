@@ -1,0 +1,45 @@
+Composer's Desktop Plug-in (cdp-plugin)
+=======================================
+
+Composer's Desktop Plug-in is free, open-source software.
+
+
+NO WARRANTY
+
+By installing and using this software you agree to do so at your own risk.
+The software is provided "as is", without warranty of any kind, express or
+implied. To the maximum extent permitted by law, the developer accepts no
+liability for any damage, data loss or other loss arising from its use.
+
+
+LICENSE
+
+cdp-plugin is distributed as open-source software. The complete source code,
+and the exact license terms that apply, are available in the project
+repository:
+
+    https://github.com/cdp-wasm-suite/cdp-plugin
+
+It builds on the Composers Desktop Project (CDP), which is licensed under the
+GNU Lesser General Public License (LGPL).
+
+
+CREDITS
+
+  * CDP algorithms and documentation source - Composers Desktop Project (LGPL)
+  * FAUST Compiler - GRAME (LGPL)
+ 
+
+  * CDP WASM port - Oli Larkin
+  * CDP for web frontend - Oli Larkin
+  * iPlug3 Plugin framework - Oli Larkin
+
+Composer's Desktop Plug-in is (c) Oli Larkin 2026.
+
+https://github.com/cdp-wasm-suite/cdp-plugin
+
+
+TRADEMARKS
+
+VST3 is a trademark of Steinberg Media Technologies GmbH.
+Audio Unit is a trademark of Apple, Inc.

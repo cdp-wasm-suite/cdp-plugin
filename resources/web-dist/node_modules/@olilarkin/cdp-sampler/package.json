@@ -1,0 +1,23 @@
+{
+  "name": "@olilarkin/cdp-sampler",
+  "version": "0.1.0",
+  "description": "Shared polyphonic one-shot sampler DSP (cubic-Hermite interpolation) for the CDP web app (WASM/AudioWorklet) and the iPlug2 CDPlugin (C++).",
+  "type": "module",
+  "exports": {
+    "./wasm": "./wasm/cdp-sampler.wasm",
+    "./CDPSampler.h": "./include/CDPSampler.h"
+  },
+  "files": [
+    "include/",
+    "src/",
+    "wasm/",
+    "scripts/",
+    "README.md"
+  ],
+  "scripts": {
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "prepack": "bash scripts/build-wasm.sh"
+  },
+  "license": "LGPL-2.1-or-later",
+  "author": "Oli Larkin"
+}

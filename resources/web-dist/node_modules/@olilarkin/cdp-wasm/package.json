@@ -1,0 +1,52 @@
+{
+  "name": "@olilarkin/cdp-wasm",
+  "version": "0.1.0",
+  "description": "CDP (Composers Desktop Project) audio processing programs compiled to WebAssembly, for Node.js and the browser.",
+  "type": "module",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./wav": "./src/wav.js"
+  },
+  "files": [
+    "src/",
+    "wasm/",
+    "docs/",
+    "index.d.ts",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "prepack": "bash scripts/build-wasm.sh",
+    "test": "node test/catalog.mjs && node test/aiff.mjs && node test/externals.mjs && node scripts/check-docs.mjs && node scripts/check-skill.mjs && node claude-plugin/skills/cdp-sound-design/scripts/smoke.mjs",
+    "test:parity": "node test/parity.mjs",
+    "docs:build": "node docs/tools/build-doc-map.mjs && node docs/tools/harvest.mjs && node docs/tools/render-effect-docs.mjs && node docs/tools/render-generator-docs.mjs"
+  },
+  "keywords": [
+    "cdp",
+    "audio",
+    "dsp",
+    "wasm",
+    "webassembly",
+    "spectral",
+    "sound-design",
+    "composers-desktop-project"
+  ],
+  "license": "LGPL-2.1-or-later",
+  "homepage": "https://github.com/olilarkin/cdp-wasm",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/olilarkin/cdp-wasm.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  }
+}

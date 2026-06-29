@@ -1,0 +1,785 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <!-- Native plugin-host bridge: when this page runs inside the cdp-plugin webview
+       the native host calls host->UI delegate functions (SPVFD/SAMFD/...) by name.
+       Define them early in <head>, before the native host's post-load eval, so they
+       exist when the host first pushes. Inert in a normal browser.
+
+       SPVFD (Send Parameter Value From Delegate) is a real dispatcher: it caches
+       the latest normalized 0..1 value per parameter index and fans out to a
+       handler registered by the UI control for that index. The cache makes the
+       host's editor-open initial push race-free — a control that mounts after the
+       push still picks up its value via registerParamHandler(). The remaining
+       delegate callbacks stay no-ops (this app has no controls for them). -->
+  <script>
+    // Stamped before first paint so [popover] markup (the about box) never
+    // flashes visible in WebViews without the Popover API (hosts linked
+    // against old macOS SDKs, e.g. REAPER). ui.js installs the JS shim; the
+    // matching CSS is under `html.no-popover` below.
+    if (!('popover' in HTMLElement.prototype)) document.documentElement.classList.add('no-popover');
+  </script>
+  <script>
+    if (typeof IPlugSendMsg === 'function') {
+      ['SCVFD', 'SCMFD', 'SAMFD', 'SMMFD', 'SSMFD'].forEach(function (fn) {
+        if (typeof window[fn] !== 'function') window[fn] = function () {};
+      });
+      window.__lastParam = window.__lastParam || {};
+      window.__paramHandlers = window.__paramHandlers || {};
+      if (typeof window.SPVFD !== 'function') {
+        window.SPVFD = function (paramIdx, value) {
+          window.__lastParam[paramIdx] = value;
+          var h = window.__paramHandlers[paramIdx];
+          if (h) h(value);
+        };
+      }
+      // Register a host->UI handler for a parameter index, applying any value the
+      // host already pushed (the initial sync) immediately.
+      window.registerParamHandler = function (paramIdx, fn) {
+        window.__paramHandlers[paramIdx] = fn;
+        if (paramIdx in window.__lastParam) fn(window.__lastParam[paramIdx]);
+      };
+
+      // Host->UI node graph (the plugin's "document"). The host pushes the restored
+      // graph as base64'd JSON via CDPLoadGraph; we cache it and hand it to the
+      // patcher's handler once it registers (the patcher mounts after this script).
+      window.__lastGraph = window.__lastGraph || null;
+      window.__graphHandler = window.__graphHandler || null;
+      if (typeof window.CDPLoadGraph !== 'function') {
+        window.CDPLoadGraph = function (b64) {
+          var json;
+          try { json = decodeURIComponent(escape(atob(b64))); }   // base64(UTF-8 bytes) -> string
+          catch (e) { try { json = atob(b64); } catch (e2) { return; } }
+          var data; try { data = JSON.parse(json); } catch (e) { return; }
+          window.__lastGraph = data;
+          if (window.__graphHandler) window.__graphHandler(data);
+        };
+      }
+      window.registerGraphHandler = function (fn) {
+        window.__graphHandler = fn;
+        if (window.__lastGraph) fn(window.__lastGraph);
+      };
+    }
+  </script>
+  <!-- Resolve the cdp-wasm engine package (installed via `npm i`, a file: link
+       to ../cdp-wasm) for the browser's native ESM loader. The package's loader
+       finds its own .wasm assets relative to src/ (import.meta.url). -->
+  <script type="importmap">
+  {
+    "imports": {
+      "@olilarkin/cdp-wasm": "./node_modules/@olilarkin/cdp-wasm/src/index.js",
+      "@olilarkin/cdp-wasm/wav": "./node_modules/@olilarkin/cdp-wasm/src/wav.js",
+      "@grame/faustwasm": "./node_modules/@grame/faustwasm/dist/esm-bundle/index.js"
+    }
+  }
+  </script>
+  <title>CDP for web</title>
+  <style>
+    /* ===== Atari ST / GEM / TOS visual scheme (1-bit, dithered greys) ===== */
+    /* All fonts are self-hosted (fonts/) so the app works fully offline,
+       including inside the plugin/extension WebViews. */
+    @font-face {
+      font-family: 'AtariST';
+      src: url('./fonts/atari-st.woff2') format('woff2'), url('./fonts/atari-st.ttf') format('truetype');
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'VT323';
+      font-style: normal; font-weight: 400; font-display: swap;
+      src: url('./fonts/vt323-400.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Silkscreen';
+      font-style: normal; font-weight: 400; font-display: swap;
+      src: url('./fonts/silkscreen-400.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Silkscreen';
+      font-style: normal; font-weight: 700; font-display: swap;
+      src: url('./fonts/silkscreen-700.woff2') format('woff2');
+    }
+    :root {
+      color-scheme: light; accent-color: var(--ink);
+      --ink: #000; --paper: #fff; --desk: #00aa00;
+      --line: #000; --shadow: #000; --backdrop: rgba(0, 80, 0, .55);
+      --grid: color-mix(in srgb, var(--line) 32%, transparent);
+      --ui: 'AtariST', 'VT323', monospace; --px: 'Silkscreen', monospace;
+      --frame: 2px solid var(--line);
+      --sb: 15px;   /* scrollbar thickness (see ::-webkit-scrollbar) */
+      --menubar-h: 38px;   /* measured live from .menubar so the desktop meets the docks exactly */
+      --dither50: conic-gradient(var(--ink) 90deg, var(--paper) 0 180deg, var(--ink) 0 270deg, var(--paper) 0);
+      --dither25: radial-gradient(var(--ink) 35%, transparent 36%);
+    }
+    * { box-sizing: border-box; -webkit-font-smoothing: none; font-smooth: never; text-rendering: optimizeSpeed; }
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+    body { font: 16px/1.25 var(--ui); color: var(--ink); background: var(--desk);
+           -webkit-user-select: none; user-select: none; }
+    /* …but keep selection where typing/copying matters */
+    input, textarea, #log { -webkit-user-select: text; user-select: text; }
+    canvas { image-rendering: pixelated; }
+
+    /* ---- desktop menu bar (above everything; Popover menus are top-layer) ---- */
+    .menubar {
+      display: flex; flex-wrap: nowrap; align-items: stretch;
+      background: var(--paper); border-bottom: var(--frame);
+      font: 16px/1.5 var(--ui); position: sticky; top: 0; z-index: 9000;
+      /* Scroll horizontally rather than clip when the items overflow (portrait
+         phones): every menu stays reachable. When they fit, the flex:1 spacer
+         fills the row so it still spans the full width. */
+      overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+      /* Keep the leftmost items clear of the display notch in landscape. */
+      padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);
+    }
+    .menubar::-webkit-scrollbar { display: none; }
+    .menubar span, .menubar button, .menubar a { padding: 5px 13px; flex: none; white-space: nowrap; }
+    /* Portrait phones: tighter items fit more before scrolling kicks in.
+       (After the base rule so it wins at equal specificity.) */
+    @media (max-width: 640px) {
+      .menubar { font-size: 13px; }
+      .menubar span, .menubar button, .menubar a { padding: 6px 8px; }
+    }
+    .menubar span { cursor: default; }
+    .menubar button { font: inherit; background: none; color: var(--ink); border: 0; border-radius: 0; box-shadow: none; margin: 0; cursor: pointer; }
+    .menubar span:not(.spacer):not(.brand-cell):not(.sr-readout):not(.app-version):hover, .menubar button:hover, .menubar button:active:not(:disabled), .menubar a:hover { background: var(--ink); color: var(--paper); }
+    .menubar .spacer { flex: 1; min-width: 0; cursor: default; }
+    .menubar .sr-readout { border-left: var(--frame); opacity: .8; font-variant-numeric: tabular-nums; }
+    .menubar .support { display: flex; align-items: center; color: var(--ink); text-decoration: none; }
+    .menubar a.support:hover { color: var(--paper); }
+    .menubar .brand { border-left: var(--frame); }
+    /* Atari logo as the desk mark: mask with the SVG and fill currentColor so it
+       follows --ink and inverts (to --paper) on hover, just like the old glyph. */
+    .brandmark { display: inline-block; width: 1.06em; height: 0.85em; vertical-align: -0.1em;
+      background-color: currentColor;
+      -webkit-mask: url('./img/atari.svg') center / contain no-repeat;
+              mask: url('./img/atari.svg') center / contain no-repeat; }
+
+    /* ---- the GEM desktop canvas + cable layer ---- */
+    /* Height shrinks for whatever is docked at the bottom: the sampler keyboard
+       (--kbd-vis) and/or the docked Log (--logdock-vis). Both default to 0. */
+    #desktop { position: relative; width: 100%; overflow: auto;
+      height: calc(100dvh - var(--menubar-h) - var(--kbd-vis) - var(--logdock-vis) - var(--kbd-footer-h)); transition: height .28s ease; }
+    /* The scrollable canvas: grows (via patcher.js) to contain the whole patch, so
+       a wide auto-laid-out chain can be scrolled to rather than clamped off-screen. */
+    #canvas { position: relative; width: 100%; height: 100%; }
+    /* Zoomable layer: nodes + cables live here and scale together. #canvas is the
+       (scaled-size) scroll sizer; this inner layer carries the transform so node
+       coordinates stay in unscaled "canvas units". */
+    #canvasContent { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      transform-origin: 0 0; }
+    /* Overview minimap — only shown (display toggled by patcher.js) when the patch
+       is larger than the visible desktop. Drag it to pan the view. */
+    /* Float clear above the sampler/log docks (and their footer) so it's never
+       hidden behind them; follows the docks as they collapse/expand. */
+    #minimap { position: fixed; right: calc(var(--sb) + 14px); z-index: 6100; display: none;
+      bottom: calc(var(--kbd-vis) + var(--logdock-vis) + var(--kbd-footer-h) + var(--sb) + 14px);
+      transition: bottom .28s ease;
+      background: var(--paper); border: var(--frame); box-shadow: 4px 4px 0 var(--shadow); cursor: pointer; }
+    #cables { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 40; }
+    #cables .cable { fill: none; stroke: var(--ink); stroke-width: 2; pointer-events: stroke; cursor: pointer; }
+    #cables .cable.rubber { stroke-dasharray: 4 4; pointer-events: none; }
+    #cables .cable.spectral { stroke-dasharray: 7 4; }  /* spectral (.ana) cables */
+    #cables .cable.breakpoint { stroke-dasharray: 1.5 3; }  /* control (envelope) cables */
+    #cables .cable:hover { stroke-width: 4; }
+    /* hover affordance to splice a process into a cable */
+    .cable-insert { position: absolute; z-index: 50; transform: translate(-50%, -50%);
+      width: 22px; height: 22px; padding: 0; margin: 0; line-height: 1; font: 18px/1 var(--ui);
+      border: var(--frame); background: var(--paper); color: var(--ink); cursor: pointer; }
+    .cable-insert:hover { background: var(--ink); color: var(--paper); }
+
+    /* ---- draggable GEM windows (nodes) ---- */
+    .gwin { position: absolute; background: var(--paper); border: var(--frame); box-shadow: 4px 4px 0 var(--shadow); min-width: 210px; max-width: 380px; }
+    /* the window you last clicked — the target for the Delete key */
+    .gwin.focused { outline: 3px solid var(--ink); outline-offset: 2px; }
+    .gwin.selected { outline: 2px dashed var(--ink); outline-offset: 2px; }
+    .gwin.focused.selected { outline: 3px solid var(--ink); }   /* primary stays solid */
+    .marquee { position: absolute; border: 1px dashed var(--ink); background: color-mix(in srgb, var(--ink) 10%, transparent); pointer-events: none; z-index: 9999; }
+    .gwin-bar { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-bottom: var(--frame);
+                cursor: move; user-select: none; font: 16px/1 var(--ui); text-transform: uppercase; letter-spacing: 1px; touch-action: none; }
+    .gwin-title { flex: 1; text-align: center; white-space: nowrap; overflow: hidden; }
+    .gwin-close { width: 18px; height: 18px; padding: 0; border: var(--frame); background: var(--paper);
+                  line-height: 1; flex: none; cursor: pointer; font: 13px/1 var(--ui); }
+    .gwin-close:active { background: var(--ink); color: var(--paper); }
+    .gwin-body { padding: 12px; }
+    /* shaded (rolled-up) window: just the title bar, ports tucked up to it */
+    .gwin.shaded .gwin-body { display: none; }
+    .gwin.shaded .gwin-ports { top: 7px; }
+    .gwin-shade { width: 18px; height: 18px; padding: 0; border: var(--frame); background: var(--paper);
+                  line-height: 1; flex: none; cursor: pointer; font: 13px/1 var(--ui); }
+    .gwin-shade:active { background: var(--ink); color: var(--paper); }
+    .gwin-help { width: 18px; height: 18px; padding: 0; border: var(--frame); background: var(--paper);
+                 line-height: 1; flex: none; cursor: pointer; font: 13px/1 var(--ui); }
+    .gwin-help:active, .gwin-help.on { background: var(--ink); color: var(--paper); }
+    .gwin-body canvas { height: 70px; margin: 6px 0; }
+    .gwin-body canvas.pedit { height: 110px; margin: 4px 0; cursor: crosshair; touch-action: none; }
+    .pftrack { position: relative; height: 22px; border: var(--frame); background: var(--paper); margin: 4px 0 0; cursor: copy; touch-action: none; }
+    .pfmark { position: absolute; top: 2px; bottom: 2px; width: 8px; margin-left: -4px; box-sizing: border-box; background: var(--paper); border: 2px solid var(--ink); cursor: ew-resize; }
+    .pfmark.sel { background: var(--ink); }
+    .pfplayhead { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--ink); pointer-events: none; }
+    .gwin select, .gwin .gem-trigger { min-width: 0; width: 100%; margin: 0; }
+    .gwin-ports { position: absolute; top: 38px; display: flex; flex-direction: column; gap: 12px; }
+    .gwin-ports-in { left: -8px; align-items: flex-start; }
+    .gwin-ports-out { right: -8px; align-items: flex-end; }
+    .gport { width: 14px; height: 14px; background: var(--paper); border: var(--frame);
+             display: block; cursor: crosshair; box-sizing: border-box; touch-action: none; }
+    .gport.full { background: var(--ink); }
+    /* socket shape encodes signal type: audio square, spectral diamond, breakpoint circle */
+    .gport.spectral { transform: rotate(45deg); }
+    .gport.breakpoint { border-radius: 50%; }
+    /* Breakpoint socket for an automatable param row: a full circle straddling the
+       window's left edge, exactly like the square/diamond I/O ports in
+       .gwin-ports-in (left:-8px of the window). The row (.prow-head) is inset by
+       14px (2px border + 12px padding), so -22px lands the circle on that edge.
+       Out of the row's flow, so labels/sliders align whether or not a row has one. */
+    .gport.rowport { position: absolute; left: -22px; top: 50%; transform: translateY(-50%);
+                     width: 14px; height: 14px; margin: 0; border-radius: 50%; }
+    .gport.compatible { box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--line); }
+    .gport.bad { background-image: var(--dither25); background-size: 3px 3px; }
+
+    /* ---- breakpoint-envelope editor (draggable nodes over a grid) ---- */
+    .brk-edit { position: relative; width: 100%; min-width: 300px; height: 160px; border: var(--frame); background: var(--paper);
+      background-image: repeating-linear-gradient(to right, var(--grid) 0 1px, transparent 1px 12.5%),
+                        repeating-linear-gradient(to bottom, var(--grid) 0 1px, transparent 1px 25%);
+      cursor: crosshair; touch-action: none; }
+    .brk-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .brk-handle { position: absolute; width: 11px; height: 11px; margin: -6px 0 0 -6px;
+      background: var(--paper); border: var(--frame); cursor: grab; box-sizing: border-box; touch-action: none; }
+    /* compact inline (per-parameter) envelope graph */
+    .env-graph { min-width: 0; height: 96px; }
+    /* the Preset / Table / 0–1 row: share the width, don't wrap the labels
+       (their min-content keeps the window wide enough for the graph) */
+    .env-controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch; margin: .2rem 0; }
+    .env-controls button { flex: 1 1 0; min-width: max-content; white-space: nowrap; padding: 5px 8px; margin: 0; text-align: center; }
+    /* the view toggle is a fixed-width icon, not a 1/N share of the row */
+    .env-controls .env-icon { flex: 0 0 auto; width: 34px; min-width: 0; padding: 5px 0; }
+    /* the beat-grid selector (gemSelect-skinned) sizes to its label, not 1/N of the row */
+    .env-controls .gem-trigger { flex: 0 0 auto; width: auto; min-width: max-content; }
+    .srctabs { margin-bottom: 8px; }
+    .srctabs .tab.on { background: var(--ink); color: var(--paper); }
+
+    /* ---- about dialog (modal popover, opened by ABOUT) ---- */
+    .about[popover] {
+      /* height explicit, not left to the popover UA style: without the Popover
+         API (html.no-popover hosts) inset:0 alone would stretch it full-height */
+      position: fixed; inset: 0; margin: auto; width: 560px; max-width: calc(100vw - 40px); height: fit-content;
+      background: var(--paper); color: var(--ink); border: var(--frame); box-shadow: 6px 6px 0 var(--shadow); padding: 0;
+    }
+    .about::backdrop { background: var(--backdrop); }
+    /* ---- Popover API fallback ----
+       In hosts whose WebView lacks the API (html.no-popover, stamped in <head>),
+       popovers aren't hidden by any UA rule, so hide them until the JS shim
+       (popover-fallback.js) opens them. Every popover here carries its own
+       position:fixed styling; native popovers sit in the top layer, so the
+       shim needs an explicit z-index above everything else instead. */
+    html.no-popover [popover]:not(.__po-open) { display: none !important; }
+    html.no-popover [popover].__po-open { display: block; z-index: 99999; }
+    .about-inner { border: var(--frame); margin: 5px; padding: 24px 18px 20px; text-align: center; }
+    .about .t1 { font-size: 32px; line-height: 1.1; letter-spacing: 1px; }
+    .about .logo-link { display: block; text-align: center; margin: 18px 0 14px; }
+    /* The logo PNG is monochrome+alpha; mask with it and fill --ink so it
+       recolours to the active theme (keeping its 1-bit dither). */
+    .about .logo-img { display: inline-block; width: 300px; max-width: 80%; aspect-ratio: 1010 / 678;
+      background: var(--ink);
+      -webkit-mask: url('./img/cdp-logo.png') center / contain no-repeat;
+              mask: url('./img/cdp-logo.png') center / contain no-repeat; }
+    .about .t2 { line-height: 1.5; }
+    .about .version { margin-top: 12px; opacity: .7; font-variant-numeric: tabular-nums; }
+    .about a { color: var(--ink); }
+    .about .ok { margin-top: 18px; box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--line); padding: 5px 40px; }
+    /* ---- support / KVR Developer Challenge modal ---- */
+    .support-modal .t1 { font-size: 22px; margin-top: 4px; }
+    .support-modal .kvr-banner { display: block; width: 100%; height: auto; aspect-ratio: 1100 / 196;
+      border: var(--frame); margin: 0 0 18px; }
+    .support-modal .kvr-link { display: block; }
+    .support-modal .t2 { max-width: 42ch; margin: 10px auto 0; }
+    .support-modal .support-actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 20px; }
+    .support-modal .support-actions .ok { margin-top: 0; display: inline-flex; align-items: center; text-decoration: none; padding: 7px 22px; }
+    .support-modal .close { padding: 5px 40px; }
+
+    /* ---- modal pop-in animation (about / support / manual) ----
+       The GEM / TOS window-open flourish: a box that zooms outward from the
+       centre in a few discrete steps (steps() — no smooth glide) with NO opacity
+       fade, since a 1-bit display appears by geometry, not alpha. Entrance only;
+       closing stays instant. Native popovers animate via :popover-open; the
+       no-popover shim (popover-fallback.js) adds .__po-open. The two are kept in
+       separate rules so a WebView that doesn't know :popover-open can't
+       invalidate the fallback rule alongside it. */
+    @keyframes gem-modal-in { from { transform: scale(.16); } to { transform: scale(1); } }
+    @keyframes gem-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+    .about:popover-open, .manual:popover-open { animation: gem-modal-in .16s steps(6, end) both; }
+    .about:popover-open::backdrop, .manual:popover-open::backdrop { animation: gem-backdrop-in 1ms steps(1) both; }
+    html.no-popover .about.__po-open, html.no-popover .manual.__po-open { animation: gem-modal-in .16s steps(6, end) both; }
+    @media (prefers-reduced-motion: reduce) {
+      .about:popover-open, .manual:popover-open,
+      .about:popover-open::backdrop, .manual:popover-open::backdrop { animation: none; }
+      html.no-popover .about.__po-open, html.no-popover .manual.__po-open { animation: none; }
+    }
+
+    /* ---- manual (browsable docs, opened by Help ▸ Manual) ----
+       Large modal popover: a scrolling nav sidebar + a scrolling page pane.
+       Content (HTML) comes from ./manual.json; the viewer lives in manual.js.
+       Like the about box it carries explicit position:fixed sizing so it works
+       under the no-popover fallback too. */
+    .manual[popover] {
+      position: fixed; inset: 0; margin: auto;
+      width: 960px; max-width: calc(100vw - 32px); height: calc(100vh - 48px);
+      background: var(--paper); color: var(--ink); border: var(--frame);
+      box-shadow: 6px 6px 0 var(--shadow); padding: 0; overflow: hidden;
+    }
+    .manual::backdrop { background: var(--backdrop); }
+    .manual-frame { border: var(--frame); margin: 5px; height: calc(100% - 10px); display: flex; flex-direction: column; overflow: hidden; }
+    .manual-bar { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: var(--frame); flex: none; font: 16px/1.5 var(--ui); }
+    .manual-bar .spacer { flex: 1; min-width: 0; }
+    .manual-heading { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .manual-back, .manual-close { font: inherit; background: none; color: var(--ink); border: var(--frame); border-radius: 0; box-shadow: none; margin: 0; padding: 1px 10px; cursor: pointer; }
+    .manual-back:hover, .manual-close:hover { background: var(--ink); color: var(--paper); }
+    .manual-back:disabled { opacity: .3; cursor: default; background: none; color: var(--ink); }
+    .manual-cols { display: flex; flex: 1; min-height: 0; }
+    .manual-nav { flex: none; width: 232px; border-right: var(--frame); overflow-y: auto; padding: 6px 0 14px; font: 14px/1.45 var(--ui); }
+    .manual-nav .sec { padding: 12px 12px 3px; font-weight: 700; opacity: .55; font-size: 11px; letter-spacing: .6px; text-transform: uppercase; }
+    .manual-nav a { display: block; padding: 3px 12px 3px 16px; color: var(--ink); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+    .manual-nav a:hover { background: var(--ink); color: var(--paper); }
+    .manual-nav a.current { background: color-mix(in srgb, var(--ink) 14%, transparent); }
+    .manual-page { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 26px 44px; font: 15px/1.6 var(--ui); }
+    .manual-page h1 { font-size: 26px; line-height: 1.15; margin: 0 0 14px; }
+    .manual-page h2 { font-size: 20px; margin: 26px 0 8px; padding-bottom: 4px; border-bottom: var(--frame); }
+    .manual-page h3 { font-size: 15px; margin: 18px 0 6px; opacity: .8; text-transform: uppercase; letter-spacing: .5px; }
+    .manual-page p { margin: 0 0 10px; }
+    .manual-page a { color: var(--ink); text-decoration: underline; cursor: pointer; }
+    /* Soften the app's inverted code chip (paper-on-ink) into a low-key tint for
+       the doc-dense manual — and set the text back to --ink, else it inherits the
+       global rule's color:var(--paper) and washes out (esp. in dark themes). */
+    .manual-page code { font-family: var(--ui); font-size: .9em; color: var(--ink); background: color-mix(in srgb, var(--ink) 13%, transparent); padding: 0 3px; }
+    .manual-page pre { background: color-mix(in srgb, var(--ink) 10%, transparent); padding: 10px 12px; margin: 0 0 12px; overflow-x: auto; }
+    .manual-page pre code { background: none; padding: 0; color: inherit; }
+    .manual-page blockquote { margin: 0 0 12px; padding: 4px 12px; border-left: 3px solid var(--ink); opacity: .85; }
+    .manual-page ul { margin: 0 0 12px; padding-left: 22px; }
+    .manual-page li { margin: 2px 0; }
+    .manual-page hr { border: 0; border-top: var(--frame); margin: 22px 0; }
+    .manual-page table { border-collapse: collapse; width: 100%; margin: 0 0 14px; font-size: 14px; }
+    .manual-page th, .manual-page td { border: var(--frame); padding: 4px 8px; text-align: left; vertical-align: top; }
+    .manual-page th { background: color-mix(in srgb, var(--ink) 10%, transparent); }
+    @media (max-width: 680px) {
+      .manual[popover] { width: 100vw; height: 100vh; max-width: none; }
+      .manual-nav { width: 150px; }
+      .manual-page { padding: 14px 16px 40px; }
+    }
+
+    /* ---- GEM modal alert / confirm ---- */
+    .gem-dialog[popover] {
+      position: fixed; inset: 0; margin: auto; width: 430px; max-width: calc(100vw - 40px); height: fit-content;
+      background: var(--paper); color: var(--ink); border: var(--frame); box-shadow: 6px 6px 0 var(--shadow); padding: 0;
+    }
+    .gem-dialog::backdrop { background: var(--backdrop); }
+    .gem-dialog-inner { border: var(--frame); margin: 5px 5px 0; padding: 18px 16px; display: flex; gap: 14px; align-items: flex-start; }
+    .gem-dialog-icon { flex: none; width: 44px; height: 44px; border: var(--frame); font-size: 26px;
+      display: flex; align-items: center; justify-content: center; }
+    .gem-dialog-msg { line-height: 1.45; }
+    /* the pixel font has no bold weight, so emphasise with an inverted highlight */
+    .gem-dialog-msg b, .gem-dialog-msg strong, .gem-tip b { font-weight: normal; background: var(--ink); color: var(--paper); padding: 0 3px; }
+    .gem-dialog-btns { display: flex; gap: 12px; justify-content: center; padding: 14px 16px 16px; }
+    .gem-dialog-btns button { padding: 5px 22px; margin: 0; }
+    .gem-dialog-btns .ok { box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--line); }
+
+    /* ---- pop-out waveform navigator (full-screen fixed overlay) ---- */
+    .wfx {
+      position: fixed; inset: 0; z-index: 10000; margin: 0; padding: 0; border: 0;
+      background: var(--paper); color: var(--ink); display: flex; flex-direction: column;
+      font: 16px/1.25 var(--ui);
+    }
+    .wfx-toolbar { display: flex; align-items: center; gap: 10px; padding: 5px 8px; border-bottom: var(--frame);
+      flex: none; flex-wrap: nowrap; overflow: hidden; }
+    .wfx-grp { display: flex; gap: 4px; flex: none; }
+    .wfx-toolbar button { font: 15px/1 var(--ui); background: var(--paper); color: var(--ink); border: var(--frame);
+      border-radius: 0; padding: 6px 10px; margin: 0; cursor: pointer; min-width: 30px; }
+    .wfx-toolbar button:hover { background: var(--ink); color: var(--paper); }
+    .wfx-toolbar button:active, .wfx-toolbar button.on { background: var(--ink); color: var(--paper); }
+    .wfx-readout { color: var(--ink); opacity: .85; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    /* Bottom status bar: holds the hover readout so its text can't reflow the toolbar. */
+    .wfx-statusbar { flex: none; display: flex; align-items: center; padding: 4px 10px; border-top: var(--frame);
+      overflow: hidden; white-space: nowrap; }
+    .wfx-spacer { flex: 1; }
+    .wfx-btn { width: 26px; height: 26px; padding: 0; line-height: 1; flex: none;
+      border: var(--frame); background: var(--paper); color: var(--ink); cursor: pointer; font: 18px/1 var(--ui); margin: 0; }
+    .wfx-btn:active { background: var(--ink); color: var(--paper); }
+    .wfx-ruler { flex: none; display: block; width: 100%; height: 22px; border-bottom: var(--frame);
+      image-rendering: pixelated; }
+    .wfx-settings { position: absolute; left: 8px; z-index: 20; background: var(--paper); border: var(--frame);
+      box-shadow: 5px 5px 0 var(--shadow); padding: 8px 10px; }
+    .wfx-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 5px 0; min-width: 210px; }
+    .wfx-row > span { font: 14px var(--ui); }
+    .wfx-settings select { font: 14px var(--ui); background: var(--paper); color: var(--ink); border: var(--frame);
+      border-radius: 0; padding: 3px 5px; cursor: pointer; }
+    .wfx-row .gem-trigger { font: 14px var(--ui); min-width: 96px; }
+    .wfx-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; }
+    .wfx-wave { position: absolute; inset: 0; width: 100%; height: 100%;
+      image-rendering: pixelated; display: block; }
+
+    /* ---- typography / controls ---- */
+    code { font-family: var(--ui); font-size: .92em; background: var(--ink); color: var(--paper); padding: 0 5px; }
+    label { color: var(--ink); margin-right: .25rem; }
+    .muted { color: var(--ink); }
+    button { font: 16px/1 var(--ui); background: var(--paper); color: var(--ink); border: var(--frame);
+             border-radius: 0; padding: 5px 16px; cursor: pointer; margin: 3px 5px 3px 0; }
+    button:active:not(:disabled) { background: var(--ink); color: var(--paper); }
+    #run { box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--line); margin: 5px 9px 5px 2px; }
+    /* Output result out of date: shade the whole window body, dim the stale waveform */
+    .gwin.stale .gwin-body { background-image: var(--dither25); background-size: 3px 3px; }
+    .gwin-body canvas.stale { opacity: .4; }
+    .stale-note { margin: 2px 0 4px; }
+    /* Play/Stop button: both labels share one grid cell so the box is always sized
+       to the wider of the two — only visibility flips, so the node never reflows. */
+    .transport-play { display: inline-grid; place-items: center; }
+    .transport-play > span { grid-area: 1 / 1; white-space: nowrap; }
+    .transport-play > span:last-child { visibility: hidden; }            /* ■ Stop reserves width, hidden until playing */
+    .transport-play.playing > span:first-child { visibility: hidden; }   /* ▶ Play */
+    .transport-play.playing > span:last-child { visibility: visible; }
+    /* Source ⓘ readout; a rate mismatch vs the session rate inverts to a badge */
+    .sr-warn { opacity: 1; }
+    .sr-info.sr-warn { background: var(--ink); color: var(--paper); padding: 2px 5px; }
+    /* active state for toggle buttons (e.g. Loop) */
+    button.on:not(:disabled) { background: var(--ink); color: var(--paper); }
+    button:disabled { cursor: default; color: var(--ink); background-color: var(--paper); background-image: var(--dither25); background-size: 3px 3px; }
+    .envtoggle { width: 30px; padding: 5px 0; text-align: center; }
+    .notebtn { width: 30px; padding: 5px 0; text-align: center; }
+    .envtoggle:not(.secondary):not(:disabled) { background: var(--ink); color: var(--paper); }
+    input, select, textarea { font: 16px/1.25 var(--ui); background: var(--paper); color: var(--ink); border: var(--frame); border-radius: 0; padding: 3px 7px; }
+    /* placeholders default to a system grey that ignores the theme — tint them with --ink */
+    input::placeholder, textarea::placeholder { color: var(--ink); opacity: .5; }
+    /* textareas may grow taller, but never wider than their window */
+    textarea { resize: vertical; max-width: 100%; }
+    input[type=number] { width: 5rem; }
+    /* GEM focus: a 1-bit halo instead of the OS blue ring */
+    input:focus-visible, textarea:focus-visible, .gem-trigger:focus-visible, .numfield:focus-within,
+    button:focus-visible {
+      outline: 2px solid var(--ink); outline-offset: 1px; }
+    /* drop the native number spinner — replaced by .numfield steppers below */
+    input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+    .numfield { display: inline-flex; align-items: stretch; vertical-align: middle; border: var(--frame); margin-right: 4px; }
+    .numfield .numinput { border: 0; border-radius: 0; padding: 3px 6px; margin: 0; text-align: right; min-width: 0; }
+    .numfield .numinput:focus-visible { outline: none; }
+    .numspin { display: flex; flex-direction: column; flex: none; border-left: var(--frame); }
+    .numbtn { width: 17px; flex: 1 1 0; min-height: 11px; padding: 0; margin: 0; border: 0; border-radius: 0;
+      background: var(--paper); color: var(--ink); font: 8px/1 var(--ui); cursor: pointer; box-shadow: none;
+      display: flex; align-items: center; justify-content: center; }
+    .numbtn:first-child { border-bottom: 1px solid var(--ink); }
+    .numbtn:active { background: var(--ink); color: var(--paper); }
+    input[type=range] { -webkit-appearance: none; appearance: none; height: 18px; padding: 0; width: 100%;
+      background: var(--paper); background-image: var(--dither50); background-size: 2px 2px; border: var(--frame); }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 22px; background: var(--paper); border: var(--frame); cursor: pointer; }
+    input[type=range]::-moz-range-thumb { width: 14px; height: 22px; background: var(--paper); border: var(--frame); border-radius: 0; cursor: pointer; }
+    input[type=range]:disabled { opacity: .55; }
+
+    /* ---- on-theme GEM scrollbars (replace the native ones everywhere) ----
+       A dithered paper trough with a raised, bordered paper thumb — drawn from
+       --ink/--paper so it inverts with the active theme. Themed arrow end-caps
+       are deliberately omitted: a scrollbar-button can't carry both a paper
+       square *and* a theme-coloured triangle (no pseudo-elements on scrollbar
+       parts, and masking the button clips its background away), so the trough
+       runs uninterrupted. WebKit/Chromium/WebView2 use the rules below; Firefox
+       (which ignores ::-webkit-scrollbar) gets the thin two-tone fallback. Note
+       we must NOT set scrollbar-width/-color globally: Chromium honours them and
+       would then ignore ::-webkit-scrollbar entirely — hence the @supports gate. */
+    ::-webkit-scrollbar { width: var(--sb); height: var(--sb); }
+    ::-webkit-scrollbar-track {
+      background: var(--paper); background-image: var(--dither50); background-size: 2px 2px;
+      box-shadow: inset 1px 1px 0 var(--line), inset -1px -1px 0 var(--line); }
+    ::-webkit-scrollbar-corner {
+      background: var(--paper); box-shadow: inset 1px 1px 0 var(--line); }
+    ::-webkit-scrollbar-thumb {
+      background: var(--paper); border: var(--frame); }
+    ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--ink) 12%, var(--paper)); }
+    ::-webkit-scrollbar-thumb:active { background: var(--ink); }
+    ::-webkit-scrollbar-button { display: none; }
+    @supports (-moz-appearance: none) {   /* Firefox only — Chromium reports false */
+      * { scrollbar-color: var(--ink) var(--paper); scrollbar-width: thin; }
+    }
+
+    canvas { width: 100%; background: var(--paper); border: var(--frame); display: block; }
+    .pv { font-family: var(--ui); min-width: 4rem; text-align: right; }
+    /* Fixed columns so every param row lines up: a relative head (anchors the
+       semicircle port), a fixed-width label column, then the flex:1 slider, and a
+       reserved note-button slot so rows with/without ♪ keep the slider aligned. */
+    .prow-head { display: flex; align-items: center; gap: .5rem; position: relative; }
+    .prow-label { flex: none; min-width: 7.5rem; }
+    .prow-note { flex: none; width: 30px; }
+
+    /* ---- GEM popup menus (Popover API) ---- */
+    .gem-trigger { display: inline-flex; align-items: stretch; vertical-align: middle; max-width: 100%;
+      min-width: 160px; border: var(--frame); background: var(--paper); color: var(--ink); font: 16px/1 var(--ui); cursor: pointer; padding: 0; margin: 0 5px 0 0; }
+    .gem-trigger .lbl { flex: 1; padding: 5px 10px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .gem-trigger .arr { width: 26px; border-left: var(--frame); display: flex; align-items: center; justify-content: center; }
+    .gem-menu { position: fixed; inset: auto; margin: 0; padding: 0; border: var(--frame); background: var(--paper);
+      color: var(--ink); box-shadow: 4px 4px 0 var(--shadow); max-height: 60vh; overflow: auto; font: 16px/1 var(--ui); }
+    .gem-menu .opt { padding: 4px 12px; white-space: nowrap; cursor: pointer; }
+    .gem-menu .opt:hover, .gem-menu .opt.cur, .gem-menu .opt[aria-selected="true"] { background: var(--ink); color: var(--paper); }
+    .gem-menu .opt.dis { cursor: default; color: var(--ink); background-color: var(--paper); background-image: var(--dither25); background-size: 3px 3px; }
+    .gem-menu .opt.dis:hover { background-color: var(--paper); color: var(--ink); }
+    .gem-menu .grp { padding: 5px 10px 4px; border-bottom: var(--frame); letter-spacing: 1px; text-transform: uppercase; position: sticky; top: 0; background: var(--paper); }
+    .gem-menu .grp:not(:first-child) { border-top: var(--frame); }
+    .gem-menu .menusep { border-top: var(--frame); margin: 3px 0; }
+    .gem-menu .opt.submenu { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .gem-menu .opt.submenu .sub-arr { opacity: .75; }
+
+    /* ---- quick-add palette (double-click desktop / Cmd-K) ---- */
+    .qopen[popover] { position: fixed; margin: 0; padding: 0; width: 380px; max-width: calc(100vw - 16px);
+      background: var(--paper); color: var(--ink); border: var(--frame); box-shadow: 5px 5px 0 var(--shadow); }
+    .qopen-input { width: 100%; border: 0; border-bottom: var(--frame); background: var(--paper); color: var(--ink);
+      font: 18px/1 var(--ui); padding: 9px 11px; outline: none; }
+    .qopen-list { max-height: 46vh; overflow: auto; }
+    .qopen-item { display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      padding: 5px 11px; cursor: pointer; white-space: nowrap; }
+    .qopen-item.sel { background: var(--ink); color: var(--paper); }
+    .qopen-item.qopen-pinsep { border-bottom: var(--frame); }   /* divider under the pinned Source */
+    .qopen-label { overflow: hidden; text-overflow: ellipsis; }
+    .qopen-item b { font-weight: normal; text-decoration: underline; }
+    .qopen-right { flex: none; display: flex; align-items: center; gap: 8px; }
+    .qopen-kind { opacity: .6; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+    .qopen-item.sel .qopen-kind { opacity: .85; }
+    .qopen-spec { border: 1px solid currentColor; padding: 0 4px; font-size: 11px; letter-spacing: 1px;
+      text-transform: uppercase; opacity: .9; }
+    .qopen-empty { padding: 8px 11px; opacity: .6; }
+    /* custom hover tooltip (replaces native title=) */
+    .gem-tip[popover] { position: fixed; inset: auto; margin: 0; max-width: 250px;
+      border: var(--frame); background: var(--paper); color: var(--ink); box-shadow: 3px 3px 0 var(--shadow);
+      padding: 4px 8px; font: 14px/1.3 var(--ui); pointer-events: none; overflow: visible; white-space: pre-line; }
+    /* per-node CDP usage docs (▸ Help disclosure) */
+    /* ? help: a panel that slides out from the window's right edge, sized to the
+       manpage (max-content) and only capped/scrolled for very wide usage text */
+    .gwin-help-panel { position: absolute; left: calc(100% + 8px); top: -2px; z-index: 3;
+      width: max-content; max-width: min(680px, 80vw); max-height: 70vh; overflow: auto;
+      border: var(--frame); background: var(--paper); box-shadow: 4px 4px 0 var(--shadow);
+      opacity: 0; transform: translateX(-16px); pointer-events: none;
+      transition: transform .18s ease, opacity .18s ease; }
+    .gwin.help-open .gwin-help-panel { opacity: 1; transform: translateX(0); pointer-events: auto; }
+    .help-text { margin: 0; padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.35 var(--ui); }
+
+    #banner { position: absolute; left: 10px; right: 10px; top: 10px; z-index: 8000;
+      background: var(--paper); border: var(--frame); box-shadow: 4px 4px 0 var(--shadow); padding: 12px 14px; line-height: 1.4; }
+
+    /* ---- optional CRT-monitor effect (Options ▸ CRT screen) ---- */
+    /* A non-interactive full-screen overlay: horizontal scanlines, an aperture
+       shimmer, a darkened vignette and a faint flicker — theme-agnostic because
+       the layers multiply/darken whatever is beneath. */
+    .crt-overlay { display: none; position: fixed; inset: 0; z-index: 99999; pointer-events: none; }
+    body.crt .crt-overlay { display: block; }
+    body.crt .crt-overlay::before {
+      content: ''; position: absolute; inset: 0; mix-blend-mode: multiply;
+      background:
+        repeating-linear-gradient(to bottom, rgba(0,0,0,.22) 0 1px, transparent 1px 3px),
+        repeating-linear-gradient(to right, rgba(0,0,0,.06) 0 1px, transparent 1px 3px);
+      animation: crt-flicker 6s steps(60) infinite;
+    }
+    body.crt .crt-overlay::after {
+      content: ''; position: absolute; inset: 0;
+      background: radial-gradient(ellipse 100% 100% at center, transparent 55%, rgba(0,0,0,.45) 100%);
+      box-shadow: inset 0 0 120px rgba(0,0,0,.5);
+    }
+    @keyframes crt-flicker { 0%,100% { opacity: 1; } 50% { opacity: .92; } 96% { opacity: .97; } 98% { opacity: .88; } }
+    @media (prefers-reduced-motion: reduce) { body.crt .crt-overlay::before { animation: none; } }
+
+    /* ---- bottom MIDI keyboard (sampler) — see keyboard.js ---- */
+    /* --kbd-bar-h is the collapsed height: the title bar (~28px) + the dock's 2px top border.
+       --kbd-vis is the keyboard's current on-screen height, which both the desktop
+       (shrinks to fit) and the docked Log (sits directly above it) read from. */
+    :root { --kbd-h: 200px; --kbd-bar-h: 30px; --kbd-vis: 0px; --kbd-footer-h: 0px;
+            --logdock-h: 180px; --logdock-bar-h: 30px; --logdock-vis: 0px; }
+    /* A paper footer strip absorbs the macOS rounded-window-corner radius so the
+       SAMPLER bar's corners aren't clipped; the whole dock stack sits above it. */
+    body.has-kbd { --kbd-vis: var(--kbd-h); --kbd-footer-h: 10px; }
+    body.has-kbd.kbd-collapsed { --kbd-vis: var(--kbd-bar-h); }
+    body.has-logdock { --logdock-vis: var(--logdock-h); }
+    body.has-logdock.logdock-collapsed { --logdock-vis: var(--logdock-bar-h); }
+    .kbd {
+      position: fixed; left: 0; right: 0; bottom: var(--kbd-footer-h); z-index: 6000;
+      height: var(--kbd-h); display: flex; flex-direction: column;
+      background: var(--paper); color: var(--ink); border-top: var(--frame);
+      transition: transform .28s ease;
+    }
+    /* Solid paper below the dock; lives in the rounded-corner zone so it's all
+       that gets clipped. No top border — it reads as one surface with the dock. */
+    .kbd-footer { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6000;
+      height: var(--kbd-footer-h); background: var(--paper); }
+    /* Collapsed: slide the dock down until only the title bar remains on screen. */
+    .kbd.collapsed { transform: translateY(calc(var(--kbd-h) - var(--kbd-bar-h))); }
+    /* …and pare the bar back to just the title, volume and expand chevron. */
+    .kbd.collapsed .kbd-adsr-toggle,
+    .kbd.collapsed .kbd-oct,
+    .kbd.collapsed .kbd-panic { display: none; }
+    @media (prefers-reduced-motion: reduce) {
+      #desktop, .kbd, .logdock, #minimap { transition: none; }
+    }
+    .kbd-bar {
+      display: flex; align-items: center; gap: 8px; padding: 3px 8px;
+      border-bottom: var(--frame); font: 14px/1.4 var(--ui); cursor: pointer;
+    }
+    .kbd-title { letter-spacing: 2px; }
+    .kbd-spacer { flex: 1; }
+    .kbd-oct { opacity: .75; }
+    .kbd-btn {
+      font: 13px/1 var(--ui); background: var(--paper); color: var(--ink);
+      border: var(--frame); border-radius: 0; padding: 3px 9px; cursor: pointer;
+    }
+    .kbd-btn:active { background: var(--ink); color: var(--paper); }
+    .kbd-btn.on { background: var(--ink); color: var(--paper); }
+    .kbd-vol-wrap { display: flex; align-items: center; gap: 6px; font: 13px/1 var(--ui); }
+    .kbd-vol { width: 96px; height: 14px; accent-color: var(--ink); cursor: pointer; }
+    .kbd-vol-db { min-width: 52px; text-align: right; opacity: .85; }
+    /* main row: left control cluster (wheels + ADSR) then the scrollable keys. */
+    .kbd-main { flex: 1; display: flex; min-height: 0; }
+    .kbd-ctrls { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-right: var(--frame); }
+    .kbd-ctrls-sep { align-self: stretch; border-left: var(--frame); margin: 8px 4px; }
+    /* ADSR faders are tucked behind a header chevron toggle, collapsed by default. */
+    .kbd-adsr { display: flex; align-items: center; gap: 12px; }
+    .kbd-adsr.collapsed { display: none; }
+    .kbd-adsr-toggle { letter-spacing: 1px; white-space: nowrap; }
+    .kbd-fader-col { display: flex; flex-direction: column; align-items: center; gap: 6px; font: 11px/1 var(--px); }
+    /* Vertical fader = a horizontal range rotated -90° inside a fixed-size box
+       (sliding up = larger). Rotating sidesteps the unreliable native
+       vertical-range sizing in current Chrome. */
+    .kbd-fader-box { position: relative; width: 26px; height: 116px; }
+    /* Override the global input[type=range] (higher specificity) so the size +
+       rotation stick; the dithered track/thumb styling is inherited from it. */
+    input[type=range].kbd-fader { position: absolute; left: 50%; top: 50%; width: 116px; height: 22px; margin: 0;
+                 transform: translate(-50%, -50%) rotate(-90deg); transform-origin: center; cursor: pointer; }
+    .kbd-fader-lbl { letter-spacing: 1px; }
+    /* `safe center` keeps the keyboard centred when it fits but falls back to the
+       start (and stays scrollable) once 8 octaves overflow the viewport. */
+    .kbd-scroll { flex: 1; overflow-x: auto; overflow-y: hidden; display: flex; justify-content: safe center; }
+    .kbd-keys { position: relative; height: 100%; flex: none; touch-action: none; border-left: var(--frame); }
+    .kbd-key {
+      position: absolute; top: 0; cursor: pointer;
+      display: flex; align-items: flex-end; justify-content: center;
+    }
+    /* White keys share single dividers (border-right) + a floor (border-bottom);
+       black keys carry a full frame and sit centred on a white divider. */
+    .kbd-white { height: 100%; background: var(--paper); border-right: var(--frame); border-bottom: var(--frame); }
+    .kbd-black { height: 62%; background: var(--ink); border: var(--frame); z-index: 2; }
+    .kbd-key.on { background: var(--ink); }
+    .kbd-black.on { background: var(--paper); }
+    .kbd-label { font: 10px/1 var(--px); padding-bottom: 3px; pointer-events: none; }
+    .kbd-white.on .kbd-label { color: var(--paper); }
+
+    /* ---- docked Log — a fixed bar pinned directly above the sampler dock ----
+       Unlike the sampler (which collapses by sliding off the bottom edge), the
+       Log sits *above* the sampler, so its concertina animates height instead:
+       bottom stays anchored on --kbd-vis and the body folds down into its bar.
+       It follows the sampler too — collapsing the keyboard slides the Log down
+       with it via the animated `bottom`. Built/managed in patcher.js. */
+    .logdock {
+      position: fixed; left: 0; right: 0; bottom: calc(var(--kbd-vis) + var(--kbd-footer-h)); z-index: 5900;
+      height: var(--logdock-h); display: flex; flex-direction: column; overflow: hidden;
+      background: var(--paper); color: var(--ink); border-top: var(--frame);
+      transition: height .28s ease, bottom .28s ease;
+    }
+    .logdock.collapsed { height: var(--logdock-bar-h); }
+    .logdock-bar {
+      display: flex; align-items: center; gap: 8px; padding: 3px 8px;
+      border-bottom: var(--frame); font: 14px/1.4 var(--ui); cursor: pointer; flex: none;
+    }
+    .logdock-title { letter-spacing: 2px; }
+    .logdock-spacer { flex: 1; }
+    .logdock-body { flex: 1; min-height: 0; display: flex; }
+    /* the shared #log element fills the dock; its floating inline size is cleared
+       by patcher.js while docked, so flex:1 governs here. */
+    .logdock-body > #log { flex: 1; padding: 6px 8px; }
+  </style>
+</head>
+<body>
+  <div class="menubar">
+    <span class="brand-cell"><span class="brandmark" role="img" aria-label="Atari"></span></span>
+    <button id="m-file">File</button>
+    <button id="m-edit">Edit</button>
+    <button id="m-generate">Generate</button>
+    <button id="m-process">Process</button>
+    <button id="m-pvoc">PVOC</button>
+    <button id="m-view">View</button>
+    <button id="m-options">Options</button>
+    <button id="m-help">Help</button>
+    <span class="spacer"></span>
+    <span id="srReadout" class="sr-readout" title="Session processing sample rate — set in Options ▸ Sample rate">—</span>
+    <button id="supportBtn" class="brand support" title="Support cdp-web — vote &amp; sponsor">Support ♥</button>
+  </div>
+
+  <!-- about dialog -->
+  <div class="about" id="aboutBox" popover="auto">
+    <div class="about-inner">
+      <div class="t1">COMPOSERS<br>DESKTOP PROJECT<br>FOR WEB</div>
+      <a class="logo-link" href="https://www.composersdesktop.com/about.html" target="_blank" rel="noopener">
+        <span class="logo-img" role="img" aria-label="Composers Desktop Project"></span>
+      </a>
+      <div class="t2">Based on the <a href="https://www.composersdesktop.com" target="_blank" rel="noopener">Composers Desktop Project</a></div>
+      <div class="t2">Part of the <a href="https://cdp-wasm-suite.github.io/" target="_blank" rel="noopener">cdp-wasm suite</a><br>Copyright
+        <a href="https://www.olilarkin.com" target="_blank" rel="noopener">Oliver Larkin</a> 2026. Not affiliated with CDP Ltd.</div>
+      <div class="t2 version" id="aboutVersion"></div>
+      <button class="ok" id="aboutOk">OK</button>
+    </div>
+  </div>
+
+  <!-- support / KVR Developer Challenge 2026 dialog (opened by the Support button) -->
+  <div class="about support-modal" id="supportBox" popover="auto">
+    <div class="about-inner">
+      <a class="kvr-link" href="https://www.kvraudio.com/kvr-developer-challenge/2026/" target="_blank" rel="noopener">
+        <img class="kvr-banner" src="./img/kvrdc26.png" alt="KVR Developer Challenge 2026" width="1100" height="196">
+      </a>
+      <div class="t1">How to support<br>this project</div>
+      <div class="t2">The plugin that embeds cdp-web is my submission to the <b>KVR Developer&nbsp;Challenge&nbsp;2026</b>. If you think this is cool, your vote would mean a lot!</div>
+      <div class="t2">You can also sponsor ongoing development on Patreon. Thank you! ♥</div>
+      <div class="support-actions">
+        <a class="ok" href="https://www.kvraudio.com/kvr-developer-challenge/2026/" target="_blank" rel="noopener">Vote on KVR ★</a>
+        <a class="ok" href="https://www.patreon.com/c/olilarkin/membership" target="_blank" rel="noopener">Sponsor on Patreon ♥</a>
+      </div>
+      <button class="ok close" id="supportOk">Close</button>
+    </div>
+  </div>
+
+  <!-- manual (browsable docs, opened from Help ▸ Manual; filled by manual.js) -->
+  <div class="manual" id="manualBox" popover="auto">
+    <div class="manual-frame">
+      <div class="manual-bar">
+        <button class="manual-back" id="manualBack" type="button" title="Back" disabled>←</button>
+        <span class="manual-heading" id="manualHeading">Manual</span>
+        <span class="spacer"></span>
+        <button class="manual-close" id="manualClose" type="button" title="Close">✕</button>
+      </div>
+      <div class="manual-cols">
+        <nav class="manual-nav" id="manualNav" aria-label="Manual contents"></nav>
+        <article class="manual-page" id="manualPage"></article>
+      </div>
+    </div>
+  </div>
+
+  <!-- the GEM desktop: windows are created here by patcher.js -->
+  <div id="desktop">
+    <div id="canvas">
+      <div id="canvasContent">
+        <svg id="cables"></svg>
+      </div>
+    </div>
+    <div id="banner" style="display:none"></div>
+  </div>
+  <!-- overview minimap: shown by patcher.js only when the patch overflows the desktop -->
+  <canvas id="minimap" title="Drag to pan the view"></canvas>
+
+  <!-- optional CRT-monitor overlay (scanlines + vignette); shown when body.crt -->
+  <div class="crt-overlay" aria-hidden="true"></div>
+
+  <script>
+    window.__cdpReady = false;
+    window.banner = function (html) { var b = document.getElementById('banner'); b.innerHTML = html; b.style.display = 'block'; };
+    window.showServingHint = function () {
+      window.banner(
+        "Couldn't load the CDP WebAssembly engine (<code>@olilarkin/cdp-wasm</code>).<br>" +
+        "1) Build the engine once (in the sibling repo): <code>cd ../cdp-wasm && npm run build:wasm</code> (needs the Emscripten SDK).<br>" +
+        "2) Install + serve from this app: <code>npm install &amp;&amp; npm run serve</code>, then open the printed URL.<br>" +
+        "The import map in this page resolves <code>@olilarkin/cdp-wasm</code> to <code>./node_modules/…</code>, so <code>node_modules/</code> must be served."
+      );
+    };
+    window.addEventListener('error', function (e) { if (e && e.target && (e.target.tagName === 'SCRIPT' || e.target.src)) window.showServingHint(); }, true);
+    setTimeout(function () { if (!window.__cdpReady) window.showServingHint(); }, 6000);
+  </script>
+  <script type="module" src="./src/core/main.js"></script>
+</body>
+</html>

@@ -53,7 +53,7 @@ FetchContent_Declare(mplug
   # without a prompt, while keeping clipboard-read allowed for patcher paste).
   # Bump deliberately when new MPlug features are needed.
   # (No GIT_SHALLOW here: shallow clones only work with branch/tag names.)
-  GIT_TAG        c03431fb5c647f24760e3c6b95515233be1f6f49
+  GIT_TAG        0c377714021f744fb2dba0bbf01a457e6aef3899
 )
 
 # Don't build MPlug's own examples/tests when consumed as a dependency

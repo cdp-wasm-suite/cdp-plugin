@@ -173,7 +173,7 @@ public:
   // cdp-web dev server, used only as a fallback (when the bundled assets are
   // missing) or when the plugin is configured with the CMake option
   // -DMY_PLUGIN_EDITOR_DEV_SERVER=ON for live-reload development — run
-  // `node serve.mjs` from /Users/oli/Dev/cdp-web to serve the app at the root.
+  // `node serve.mjs` from the cdp-web directory to serve the app at the root.
   static constexpr std::string_view editorURL() { return "http://localhost:8000/"; }
 
   void* createEditor(void* parentView, mplug::WindowType windowType);

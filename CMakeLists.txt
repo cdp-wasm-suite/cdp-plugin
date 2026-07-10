@@ -45,15 +45,20 @@ include(FetchContent)
 
 FetchContent_Declare(mplug
   GIT_REPOSITORY https://github.com/olilarkin/mplug.git
-  # Pinned to an immutable SHA for reproducible builds (main as of 2026-07-05,
+  # Pinned to an immutable SHA for reproducible builds (main as of 2026-07-10,
   # includes BUNDLE_NAME artifact naming, the AU/AUv3 human-readable VENDOR
   # split, the ARM64EC VST3 bundle-folder + multi-config Windows output-dir
-  # fixes, and the choc `Options::denyPermissionRequests` flag that lets the
+  # fixes, the choc `Options::denyPermissionRequests` flag that lets the
   # WebView2 backend deny prompt-triggering web permissions — e.g. Web MIDI —
-  # without a prompt, while keeping clipboard-read allowed for patcher paste).
+  # without a prompt, while keeping clipboard-read allowed for patcher paste,
+  # and the choc submodule bumped to the iPlug3/choc `mplug` branch tip, which
+  # adds WebView file-download support plus the `handleNavigation` /
+  # `openExternalLinksInBrowser` options (macOS + Windows) the editor uses to
+  # open external URLs in the user's browser instead of navigating the plugin
+  # UI away from itself).
   # Bump deliberately when new MPlug features are needed.
   # (No GIT_SHALLOW here: shallow clones only work with branch/tag names.)
-  GIT_TAG        0c377714021f744fb2dba0bbf01a457e6aef3899
+  GIT_TAG        2ad9ce18fcae2839c23ee3929f3eef4c7e15fe88
 )
 
 # Don't build MPlug's own examples/tests when consumed as a dependency

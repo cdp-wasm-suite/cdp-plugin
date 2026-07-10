@@ -82,6 +82,11 @@ void* ComposersDesktopPlugin::createEditor(void* parentView, mplug::WindowType w
     opts.enableDebugMode = true;
 #endif
 
+    // The editor is a plugin UI, not a browser: a link to the CDP docs or the issue
+    // tracker must open in the user's browser. Letting it replace the WebView's content
+    // would strand them on a web page inside the plugin window with no way back.
+    opts.openExternalLinksInBrowser = true;
+
     // Decide how to load the CDP8 web app: from the bundled assets served
     // in-process (release / normal builds) or from the dev server (opt-in via the
     // MY_PLUGIN_EDITOR_DEV_SERVER build option, for live-reload development).

@@ -69,7 +69,7 @@ fb.setupNameTable({"familyName":"AtariST","styleName":"Regular",
   "version":"1.0","copyright":"Atari ST system font (ntwk/atarist-font, modelb.bbcmicro.com)"})
 fb.setupOS2(sTypoAscender=ASCENT*P, sTypoDescender=-DESCENT*P, usWinAscent=ASCENT*P, usWinDescent=DESCENT*P)
 fb.setupPost()
-OUT="/Users/oli/Dev/CDP8/wasm/demo/fonts/"
+OUT="/Users/oli/Dev/cdp-wasm-suite/cdp-web/fonts"
 fb.save(OUT+"atari-st.ttf")
 fb.font.flavor="woff2"; fb.save(OUT+"atari-st.woff2")
 print("glyphs:",len(order),"cmap:",len(cmap))

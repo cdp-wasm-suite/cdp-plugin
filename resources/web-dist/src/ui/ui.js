@@ -449,6 +449,54 @@ export function wavDuration(wav) {
   try { const d = decodeAudio(wav); return d.length / d.sampleRate; } catch { return 1; }
 }
 
+// True when the page is embedded in a native WebView host that launched it with a
+// #cdpHost session (see host-bridge.js).
+export function inEmbeddedHost() {
+  return typeof location !== 'undefined' && /(?:^|[#&])cdpHost=/.test(location.hash || '');
+}
+
+// Whether writing a file to disk can work here. A browser download navigates to a
+// blob URL, which a native WebView (Ableton's Extension Host, for one) silently
+// drops — no dialog, no file. A host can restore the capability by setting
+// window.__cdpSaveWav. Callers should hide their save affordances when this is
+// false rather than offer a button that does nothing.
+export function canSaveFile() {
+  if (typeof window !== 'undefined' && typeof window.__cdpSaveWav === 'function') return true;
+  return !inEmbeddedHost();
+}
+
+// The name to offer for a rendered WAV. An Output window's user label (set via
+// Rename…) becomes the stem, so several outputs in one patch don't all suggest the
+// same file, and a local date-time stamp keeps repeated saves of the same window
+// from landing on top of each other.
+export function wavFileName(label) {
+  const stem = String(label ?? '')
+    .trim()
+    .replace(/\.wav$/i, '')               // don't end up with "…-wav-<stamp>.wav"
+    .replace(/[^\p{L}\p{N}_-]+/gu, '-')   // anything a filesystem might object to
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60) || 'cdp-output';
+
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`
+              + `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+
+  return `${stem}-${stamp}.wav`;
+}
+
+// Save WAV bytes to disk. A native host embedding cdp-web (e.g. the Tauri desktop
+// wrapper) can set window.__cdpSaveWav(bytes, name) to show a real OS save dialog;
+// otherwise this falls back to a browser download so the page still works standalone.
+export async function saveWavFile(bytes, name = 'cdp-output.wav') {
+  const hostSave = typeof window !== 'undefined' && window.__cdpSaveWav;
+  if (typeof hostSave === 'function') { await hostSave(bytes, name); return; }
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 // ---- shared breakpoint-envelope editor (graph + table + presets) ------------
 // One widget used by both the inline per-parameter editor and the separate
 // Breakpoint window. An envelope is { vnorm, tnorm, tunit?, text } where text is

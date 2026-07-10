@@ -3,7 +3,8 @@
 // (ui.js), the execution engine (graph.js) and the cdp-wasm package.
 import {
   $, el, dropdown, openMenuAt, gemSelect, gemAlert, gemPrompt, initTooltips, numField, paramRow, makeEnvelopeEditor, parseBrk,
-  drawWave, wavDuration, log, setLogSink, ENVELOPE_PARAMS, axisFlags, makePartialsEditor,
+  drawWave, wavDuration, log, setLogSink, ENVELOPE_PARAMS, axisFlags, makePartialsEditor, saveWavFile,
+  canSaveFile, inEmbeddedHost, wavFileName,
 } from '../ui/ui.js';
 import { GraphRunner, validateConnection, byId, inEdge, portKind, GENERATORS, genById, applyGenerator, envToBrk, envToPoints, layoutGraph } from './graph.js';
 import { FAUST_PRESETS, DEFAULT_CODE, compileFaust, renderFaust } from '../dsp/faust.js';
@@ -199,6 +200,7 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
   const selection = new Set();  // node ids in the multi-selection — drives move / copy / delete
   let lastResult = null;        // most recent rendered WAV (for File ▸ Save result…)
   let lastResultStale = false;  // …and whether the graph changed since it rendered
+  let lastResultLabel = '';     // …and the label of the Output window that rendered it
   let programList = [], spectralSet = new Set();
   let history = [], histIndex = -1;  // serialized-state snapshots for undo / redo
   let clipboard = null, pasteCascade = 0;   // copied subgraph (in-memory; also mirrored to the system clipboard)
@@ -250,7 +252,7 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
   // Embedded in a native WebView host (DAW extension) — signalled by the #cdpHost
   // session hash (see host-bridge.js). Together with inPlugin this covers every
   // native WebView we run inside, vs. a plain browser tab.
-  const isEmbedded = () => /(?:^|[#&])cdpHost=/.test(location.hash || '');
+  const isEmbedded = inEmbeddedHost;
   const inNativeHost = () => inPlugin() || isEmbedded();
   // Plugin-only native OS drag of the rendered WAV out to the host DAW timeline.
   // Disabled for now: it fires on pointerdown and preempts the HTML5 drag, which
@@ -437,11 +439,9 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
     const n = spawnSource();
     n.setWav(wav, name || 'region');
   }
-  function saveWav(wav, name = 'cdp-output.wav') {
+  async function saveWav(wav, name = wavFileName()) {
     if (!wav) return;
-    const url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
-    const a = el('a', { href: url, download: name }); a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    await saveWavFile(wav, name);
     log('saved ' + name + ' (' + wav.length + ' bytes)');
   }
   async function genTone(freq, dur) {
@@ -648,6 +648,7 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
 
   // Drag a new cable from a port socket.
   function startCableDrag(ev, portEl) {
+    if (ev.button !== 0) return;  // only the primary button drags a cable
     ev.preventDefault(); ev.stopPropagation();
     const dir = portEl.dataset.dir, kind = portEl.dataset.kind;
     const from = { node: portEl.dataset.node, port: portEl.dataset.port };
@@ -783,6 +784,7 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
       }
     }, true);
     bar.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;  // right/middle button: let contextmenu open the menu, don't start a drag
       if (e.target.closest('.gwin-close, .gwin-shade, .gwin-help')) return;  // let the title-bar buttons get their own click
       focus();
       // Dragging a node outside the current selection collapses to just it; dragging
@@ -1732,6 +1734,9 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
     const transport = makeTransport(() => n.result);
     n.transportDispose = transport.dispose;
     const saveBtn = el('button', { class: 'secondary', type: 'button', textContent: '↓ Save', disabled: true });
+    // A host WebView that can't write a file gets no Save button — the host's own
+    // injected action (e.g. "Apply → Live") is how the result leaves the dialog.
+    if (!canSaveFile()) saveBtn.style.display = 'none';
     // Drag the rendered WAV straight out to the desktop, Finder or a DAW track.
     // Uses Chromium's DownloadURL drag flavour ("<mime>:<name>:<url>"); the blob
     // URL is minted per drag and revoked when it ends. Disabled until there's a
@@ -1750,7 +1755,7 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
     // NATIVE_DRAG_OUT_TO_DAW): it starts on pointerdown and preempts the HTML5
     // drag, which would block the in-canvas drop → new Source inside the plugin.
     dragBtn.addEventListener('pointerdown', () => {
-      if (NATIVE_DRAG_OUT_TO_DAW && n.result && hostSupportsDragOut()) beginNativeDragOut('cdp-output.wav');
+      if (NATIVE_DRAG_OUT_TO_DAW && n.result && hostSupportsDragOut()) beginNativeDragOut(wavFileName(n.name));
     });
     dragBtn.addEventListener('dragstart', (e) => {
       if (!n.result) { e.preventDefault(); return; }
@@ -1765,7 +1770,7 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
       let url = null;
       if (!inNativeHost()) {
         url = URL.createObjectURL(new Blob([n.result], { type: 'audio/wav' }));
-        e.dataTransfer.setData('DownloadURL', `audio/wav:cdp-output.wav:${url}`);
+        e.dataTransfer.setData('DownloadURL', `audio/wav:${wavFileName(n.name)}:${url}`);
       }
       dragBtn.addEventListener('dragend', () => {
         draggingOutput = null;
@@ -1773,7 +1778,7 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
       }, { once: true });
     });
     const runBtn = el('button', { id: 'run', type: 'button', textContent: 'Run' });
-    saveBtn.onclick = () => saveWav(n.result);
+    saveBtn.onclick = () => saveWav(n.result, wavFileName(n.name));
     // Mark the rendered result out of date (only meaningful once there is one):
     // shade the whole Output window and dim its waveform until the next Run.
     n.markStale = () => { if (!n.result || n.stale) return; n.stale = true; runBtn.textContent = '⟳ Run'; n.el.classList.add('stale'); staleNote.style.display = ''; wave.classList.add('stale'); };
@@ -1781,7 +1786,7 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
       runBtn.disabled = true; runBtn.textContent = 'Running…';
       try {
         const wav = await runner.run(patch, n.id);
-        n.result = lastResult = wav; n.stale = lastResultStale = false; drawWave(wave, wav);
+        n.result = lastResult = wav; n.stale = lastResultStale = false; lastResultLabel = n.name || ''; drawWave(wave, wav);
         if (sampler) sampler.setSampleFromWav(wav);   // keep the playable sample current
         n.el.classList.remove('stale'); staleNote.style.display = 'none'; wave.classList.remove('stale');
         transport.setEnabled(true); saveBtn.disabled = false; dragBtn.disabled = false;
@@ -1941,7 +1946,7 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
     patchMeta = data.metadata || null;
     if (typeof data.tempo === 'number') setBpm(data.tempo);
     for (const n of [...patch.nodes.values()]) if (n.type !== 'log') removeNode(n);
-    if (resetSample) { lastResult = null; lastResultStale = false; if (sampler) sampler.clearSample(); }
+    if (resetSample) { lastResult = null; lastResultStale = false; lastResultLabel = ''; if (sampler) sampler.clearSample(); }
     setKeyboardVisible(!!data.sampler);   // sampler dock travels with the patch (hidden unless stored)
     clearSelection();   // ids are re-minted below, so any current selection is stale
     cascade = 0;
@@ -2115,7 +2120,7 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
     cascade = 0;
     // Drop the previous patch's rendered result so the sampler doesn't keep
     // replaying it (it's re-pushed whenever the keyboard is shown).
-    lastResult = null; lastResultStale = false;
+    lastResult = null; lastResultStale = false; lastResultLabel = '';
     if (sampler) sampler.clearSample();
     setKeyboardVisible(false);   // a fresh patch starts with the sampler hidden
     const s = spawnSource(); s.x = 30; s.y = 20; s.el.style.left = '30px'; s.el.style.top = '20px';
@@ -2132,10 +2137,13 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
       );
       if (choice !== 'save') return;
     }
-    saveWav(lastResult);
+    saveWav(lastResult, wavFileName(lastResultLabel));
   }
 
   // ---- menu bar -------------------------------------------------------------
+  // Save patch / Save result both write a file, so they are omitted in a host
+  // WebView that can't (see canSaveFile) — Open patch still works, its file input
+  // is native. The trailing separator goes with them.
   dropdown($('m-file'), () => [
     { label: 'New patch', action: () => newPatch() },
     { sep: true },
@@ -2143,11 +2151,12 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
     { label: 'Add audio file output', action: () => spawnOutput() },
     { sep: true },
     { label: 'Open patch…', action: () => openPatch() },
-    { label: 'Save patch…', action: () => savePatch() },
+    ...(canSaveFile() ? [{ label: 'Save patch…', action: () => savePatch() }] : []),
     { sep: true },
     { label: 'Recipes', submenu: () => recipeMenu() },
-    { sep: true },
-    { label: 'Save result…', disabled: !lastResult, action: () => saveResult() },
+    ...(canSaveFile()
+      ? [{ sep: true }, { label: 'Save result…', disabled: !lastResult, action: () => saveResult() }]
+      : []),
   ]);
   if ($('m-edit')) dropdown($('m-edit'), () => [
     { label: 'Undo', disabled: !canUndo(), action: () => undo() },
@@ -2580,7 +2589,7 @@ export function startPatcher(cdp, audioCtx, sampler = null) {
   // ignore the previous session and always boot a clean default graph, so the
   // host's injected audio lands in a single Source node rather than alongside a
   // restored one (and so no async restore clobbers the injection).
-  const embedded = /(?:^|[#&])cdpHost=/.test(location.hash || '');
+  const embedded = isEmbedded();
   const saved = embedded ? null : readSaved();     // a patch from a previous session, if any
   // No saved patch → show the default Source + Output straight away.
   if (!saved) {

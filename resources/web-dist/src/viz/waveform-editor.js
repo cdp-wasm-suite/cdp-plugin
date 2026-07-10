@@ -9,7 +9,7 @@
 // popover top layer: both avoid Chrome GPU compositing bugs found during
 // bring-up where offscreen/stacked canvases paint blank.)
 import { decodeAudio, encodeWav } from '@olilarkin/cdp-wasm/wav';
-import { el, gemSelect } from '../ui/ui.js';
+import { el, gemSelect, saveWavFile, canSaveFile, wavFileName } from '../ui/ui.js';
 import {
   fit, zoomAt, zoomToRange, panByPixels, followStep,
   sampleToX, xToSample, laneAt, laneRect, waterfallGeometry,
@@ -108,8 +108,10 @@ export function openWaveformEditor({ wav, audioCtx, name = 'audio', nodeId = nul
     gearBtn.classList.toggle('on', show);
     gearBtn.blur();
   });
-  const exportBtn = mkBtn('⤓ WAV', 'Download selection (or whole sound) as WAV', () => exportRegion());
-  const regionGrp = el('span', { class: 'wfx-grp' }, exportBtn);
+  // Omitted in a host WebView that can't write a file (see canSaveFile) — Promote
+  // and Crop keep the region tools useful there.
+  const regionGrp = el('span', { class: 'wfx-grp' });
+  if (canSaveFile()) regionGrp.append(mkBtn('⤓ WAV', 'Download selection (or whole sound) as WAV', () => exportRegion()));
   if (onPromote) regionGrp.append(mkBtn('→ Src', 'Promote selection (or whole sound) to a new Source node', () => promoteRegion()));
   if (onCrop) regionGrp.append(mkBtn('✂ Crop', 'Crop this Source to the selection (replaces its audio)', () => cropRegion()));
   const closeBtn = el('button', { class: 'wfx-btn', type: 'button', textContent: '×', title: 'Close (Esc)' });
@@ -119,7 +121,7 @@ export function openWaveformEditor({ wav, audioCtx, name = 'audio', nodeId = nul
     el('span', { class: 'wfx-grp' }, modeBtn, scaleBtn, gearBtn),
     el('span', { class: 'wfx-grp' }, fitBtn, zoomOutBtn, zoomInBtn, zoomSelBtn),
     el('span', { class: 'wfx-grp' }, playBtn, loopBtn, loopSelBtn, snapBtn),
-    regionGrp,
+    regionGrp.childElementCount ? regionGrp : null,
     el('span', { class: 'wfx-spacer' }),
     closeBtn,
   );
@@ -768,13 +770,10 @@ export function openWaveformEditor({ wav, audioCtx, name = 'audio', nodeId = nul
     const dec = decodeAudio(wav);
     return encodeWav({ sampleRate: dec.sampleRate, channelData: dec.channelData.map((c) => c.subarray(a, b)) });
   }
-  function exportRegion() {
+  async function exportRegion() {
     const { a, b, sel } = currentRegion();
     if (b - a < 1) return;
-    const url = URL.createObjectURL(new Blob([sliceRegionWav(a, b)], { type: 'audio/wav' }));
-    const an = el('a', { href: url, download: `${(name || 'audio').replace(/[^\w.-]+/g, '_')}${sel ? '-sel' : ''}.wav` });
-    an.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    await saveWavFile(sliceRegionWav(a, b), wavFileName(`${name || 'audio'}${sel ? '-sel' : ''}`));
   }
   function promoteRegion() {
     if (!onPromote) return;

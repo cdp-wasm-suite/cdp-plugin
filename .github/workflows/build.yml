@@ -17,6 +17,12 @@ on:
         type: boolean
         default: false
 
+# packages: read lets GITHUB_TOKEN install @cdp-wasm-suite/cdp-web (the GUI)
+# from GitHub Packages in scripts/fetch-web-dist.sh.
+permissions:
+  contents: read
+  packages: read
+
 concurrency:
   # A new run for the same ref (branch/PR) cancels the still-running older one,
   # so pushing again supersedes the previous build instead of piling up (saves
@@ -108,6 +114,11 @@ jobs:
         run: |
           git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
           git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Fetch web GUI (@cdp-wasm-suite/cdp-web)
+        run: scripts/fetch-web-dist.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install dependencies
         run: brew install ninja ccache
@@ -235,6 +246,12 @@ jobs:
           git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
           git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
 
+      - name: Fetch web GUI (@cdp-wasm-suite/cdp-web)
+        shell: bash
+        run: scripts/fetch-web-dist.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       # MSVC env so the Ninja generator finds cl.exe. Ninja + sccache gives
       # cross-run compiler caching, which the VS/MSBuild generator can't use.
       - uses: ilammy/msvc-dev-cmd@v1
@@ -306,6 +323,12 @@ jobs:
           git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
           git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
 
+      - name: Fetch web GUI (@cdp-wasm-suite/cdp-web)
+        shell: bash
+        run: scripts/fetch-web-dist.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Configure
         run: cmake -B build/win-${{ matrix.arch }} -A ${{ matrix.arch }}
 
@@ -337,6 +360,11 @@ jobs:
           git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
           git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
 
+      - name: Fetch web GUI (@cdp-wasm-suite/cdp-web)
+        run: scripts/fetch-web-dist.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Configure
         run: cmake --preset xcode
 
@@ -364,6 +392,11 @@ jobs:
           git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
           git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
 
+      - name: Fetch web GUI (@cdp-wasm-suite/cdp-web)
+        run: scripts/fetch-web-dist.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Configure
         run: cmake --preset ios
 
@@ -390,6 +423,11 @@ jobs:
         run: |
           git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
           git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Fetch web GUI (@cdp-wasm-suite/cdp-web)
+        run: scripts/fetch-web-dist.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure
         run: cmake --preset visionos

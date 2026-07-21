@@ -79,9 +79,11 @@ FetchContent_MakeAvailable(mplug)
 # returns nullptr (hosts show their generic parameter UI). The standalone App
 # provides the full webview UI on all three platforms.
 #
-# The GUI is the CDP web app (cdp-web), bundled as prebuilt assets under
-# resources/web-dist/ and copied into each format's Contents/Resources/web at
-# build time (see the resource-copy section after mplug_add_plugin below). At
+# The GUI is the CDP web app (cdp-web), consumed as the @cdp-wasm-suite/cdp-web
+# npm package (GitHub Packages): scripts/fetch-web-dist.sh unpacks it into
+# resources/web-dist/ (gitignored), and it is copied into each format's
+# Contents/Resources/web at build time (see the resource-copy section after
+# mplug_add_plugin below). At
 # runtime the editor serves those files in-process via CHOC's fetchResource
 # callback. For live-reload development against the cdp-web dev server, set
 # -DMY_PLUGIN_EDITOR_DEV_SERVER=ON (loads http://localhost:8000/ instead).
@@ -277,8 +279,8 @@ elseif(NOT EMSCRIPTEN)
     if(NOT EXISTS ${MY_PLUGIN_WEB_DIST}/index.html)
       message(WARNING
         "resources/web-dist/index.html not found — the editor will fall back to "
-        "the dev server. Build cdp-web (npm run bundle) and vendor its dist/bundle/ "
-        "into resources/web-dist/, or configure with -DMY_PLUGIN_EDITOR_DEV_SERVER=ON.")
+        "the dev server. Fetch the GUI package with scripts/fetch-web-dist.sh "
+        "(@cdp-wasm-suite/cdp-web), or configure with -DMY_PLUGIN_EDITOR_DEV_SERVER=ON.")
     endif()
     # Track the vendored web files so the copy re-runs whenever they change — not
     # just when the format target relinks. A plain TARGET POST_BUILD step only fires

@@ -41,9 +41,11 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
-# Allow the built-in GITHUB_TOKEN to create the Release and upload assets.
+# Allow the built-in GITHUB_TOKEN to create the Release and upload assets, and
+# to install @cdp-wasm-suite/cdp-web (the GUI) from GitHub Packages.
 permissions:
   contents: write
+  packages: read
 
 jobs:
   # Guard: a tagged release must match the single source of truth
@@ -98,6 +100,11 @@ jobs:
         run: |
           git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
           git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Fetch web GUI (@cdp-wasm-suite/cdp-web)
+        run: scripts/fetch-web-dist.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install dependencies
         run: brew install ninja
@@ -220,6 +227,12 @@ jobs:
         run: |
           git config --global url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "https://github.com/"
           git config --global --add url."https://x-access-token:${{ secrets.MPLUG_CI_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Fetch web GUI (@cdp-wasm-suite/cdp-web)
+        shell: bash
+        run: scripts/fetch-web-dist.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure
         run: cmake -B build/win-${{ matrix.arch }} -A ${{ matrix.arch }}

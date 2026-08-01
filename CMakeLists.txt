@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(ComposersDesktopPlugin
+project(CDPPlugin
   VERSION 0.1.2
   DESCRIPTION "Composer's Desktop Plug-in"
   LANGUAGES CXX C
@@ -69,7 +69,7 @@ FetchContent_MakeAvailable(mplug)
 
 # ----------------------------------------------------------------------------
 # Native plugin formats (skipped when building WebAssembly/WCLAP via Emscripten).
-# Produces: ComposersDesktopPluginClap, ComposersDesktopPluginVST3, ComposersDesktopPluginAUv2 (macOS), ComposersDesktopPluginApp.
+# Produces: CDPPluginClap, CDPPluginVST3, CDPPluginAUv2 (macOS), CDPPluginApp.
 # (The Cli and Python targets are defined but excluded from the default build —
 # see EXCLUDE_FROM_ALL below; headless formats are irrelevant for this
 # WebView-based plugin.)
@@ -100,8 +100,8 @@ if(MY_PLUGIN_APPLE_EMBEDDED)
   # ---- iOS / visionOS: AUv3 app extension only (requires -G Xcode) ----
   include(MPlugAUv3)
 
-  mplug_add_auv3(ComposersDesktopPluginAUv3
-    PLUGIN_CLASS ComposersDesktopPlugin
+  mplug_add_auv3(CDPPluginAUv3
+    PLUGIN_CLASS CDPPlugin
     DISPLAY_NAME "cdp-plugin"
     PLUGIN_HEADER src/composers_desktop_plugin.h
     IDENTIFIER "com.olilarkin.cdp"
@@ -149,8 +149,8 @@ elseif(NOT EMSCRIPTEN)
     add_compile_definitions(MY_PLUGIN_EDITOR_DEV_SERVER=1)
   endif()
 
-  mplug_add_plugin(ComposersDesktopPlugin
-    PLUGIN_CLASS ComposersDesktopPlugin
+  mplug_add_plugin(CDPPlugin
+    PLUGIN_CLASS CDPPlugin
     DISPLAY_NAME "cdp-plugin"
     PLUGIN_HEADER src/composers_desktop_plugin.h
     PLUGIN_ID "com.olilarkin.cdp"
@@ -177,8 +177,8 @@ elseif(NOT EMSCRIPTEN)
   # formats, so drop them from the default build here (targets stay defined and
   # can still be built by name if ever needed).
   foreach(_headless Cli Python)
-    if(TARGET ComposersDesktopPlugin${_headless})
-      set_target_properties(ComposersDesktopPlugin${_headless}
+    if(TARGET CDPPlugin${_headless})
+      set_target_properties(CDPPlugin${_headless}
         PROPERTIES EXCLUDE_FROM_ALL TRUE)
     endif()
   endforeach()
@@ -203,17 +203,17 @@ elseif(NOT EMSCRIPTEN)
   #     --app-icon AppIcon --platform macosx --minimum-deployment-target 10.15 \
   #     --output-partial-info-plist "$(mktemp)" --output-format human-readable-text
   # --------------------------------------------------------------------------
-  if(APPLE AND TARGET ComposersDesktopPluginApp)
+  if(APPLE AND TARGET CDPPluginApp)
     set(MY_PLUGIN_MAC_ICON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/resources/mac-icon)
     if(EXISTS ${MY_PLUGIN_MAC_ICON_DIR}/AppIcon.icns)
-      set(_app_res "$<TARGET_BUNDLE_CONTENT_DIR:ComposersDesktopPluginApp>/Resources")
-      add_custom_command(TARGET ComposersDesktopPluginApp POST_BUILD
+      set(_app_res "$<TARGET_BUNDLE_CONTENT_DIR:CDPPluginApp>/Resources")
+      add_custom_command(TARGET CDPPluginApp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E rm -f "${_app_res}/mac.icns"
         COMMAND ${CMAKE_COMMAND} -E copy
           "${MY_PLUGIN_MAC_ICON_DIR}/AppIcon.icns" "${_app_res}/AppIcon.icns"
         COMMAND ${CMAKE_COMMAND} -E copy
           "${MY_PLUGIN_MAC_ICON_DIR}/Assets.car" "${_app_res}/Assets.car"
-        COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:ComposersDesktopPluginApp>"
+        COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:CDPPluginApp>"
         COMMENT "Installing macOS app icon (AppIcon.icns + Assets.car) into cdp-plugin.app"
         VERBATIM)
     else()
@@ -231,12 +231,12 @@ elseif(NOT EMSCRIPTEN)
   # README). Compiling a .rc that references it as ICON id 1 makes Explorer / the
   # taskbar show it for cdp-plugin.exe. (MSVC compiles .rc sources automatically.)
   # --------------------------------------------------------------------------
-  if(WIN32 AND TARGET ComposersDesktopPluginApp)
+  if(WIN32 AND TARGET CDPPluginApp)
     set(MY_PLUGIN_ICO_PATH "${CMAKE_CURRENT_SOURCE_DIR}/resources/cdp-plugin.ico")
     if(EXISTS "${MY_PLUGIN_ICO_PATH}")
       configure_file("${CMAKE_CURRENT_SOURCE_DIR}/resources/app-icon.rc.in"
                      "${CMAKE_CURRENT_BINARY_DIR}/app-icon.rc" @ONLY)
-      target_sources(ComposersDesktopPluginApp PRIVATE
+      target_sources(CDPPluginApp PRIVATE
                      "${CMAKE_CURRENT_BINARY_DIR}/app-icon.rc")
     else()
       message(WARNING "resources/cdp-plugin.ico not found — the Windows App .exe "
@@ -255,8 +255,8 @@ elseif(NOT EMSCRIPTEN)
   # CLI output (--list-devices etc.) run from a terminal no longer prints — this
   # app is GUI-first on Windows; --screenshot/headless still work (they write files).
   # --------------------------------------------------------------------------
-  if(MSVC AND TARGET ComposersDesktopPluginApp)
-    target_link_options(ComposersDesktopPluginApp PRIVATE
+  if(MSVC AND TARGET CDPPluginApp)
+    target_link_options(CDPPluginApp PRIVATE
       "/SUBSYSTEM:WINDOWS" "/ENTRY:mainCRTStartup")
   endif()
 
@@ -292,7 +292,7 @@ elseif(NOT EMSCRIPTEN)
 
   if(APPLE AND NOT MY_PLUGIN_EDITOR_DEV_SERVER)
     foreach(_fmt VST3 Clap AUv2 App)
-      set(_tgt ComposersDesktopPlugin${_fmt})
+      set(_tgt CDPPlugin${_fmt})
       if(TARGET ${_tgt})
         set(_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_tgt}.webcopy.stamp")
         # Stamp-driven copy: runs after the bundle is built (DEPENDS ${_tgt}) and
@@ -335,9 +335,9 @@ elseif(NOT EMSCRIPTEN)
     # (target ; destination) pairs — destinations differ per format, so drive it
     # from an explicit list rather than the macOS genex loop.
     set(_win_web_targets
-      "ComposersDesktopPluginVST3"  "${_out}/cdp-plugin.vst3/Contents/Resources/web"
-      "ComposersDesktopPluginApp"   "${_out}/web"
-      "ComposersDesktopPluginClap"  "${_out}/cdp-plugin.web")
+      "CDPPluginVST3"  "${_out}/cdp-plugin.vst3/Contents/Resources/web"
+      "CDPPluginApp"   "${_out}/web"
+      "CDPPluginClap"  "${_out}/cdp-plugin.web")
     list(LENGTH _win_web_targets _n)
     math(EXPR _last "${_n} - 1")
     foreach(_i RANGE 0 ${_last} 2)
@@ -363,8 +363,8 @@ endif()
 if(MPLUG_BUILD_WCLAP)
   include(MPlugWClap)
 
-  mplug_add_wclap(ComposersDesktopPluginWClap
-    PLUGIN_CLASS ComposersDesktopPlugin
+  mplug_add_wclap(CDPPluginWClap
+    PLUGIN_CLASS CDPPlugin
     BUNDLE_NAME "cdp-plugin"
     PLUGIN_HEADER src/composers_desktop_plugin.h
     PLUGIN_ID "com.olilarkin.cdp"

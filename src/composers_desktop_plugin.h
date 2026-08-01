@@ -34,10 +34,10 @@
 // pitched sampler under MIDI control — both host MIDI (delivered to process() as
 // a MidiEventsView) and the web app's on-screen keyboard (delivered on the
 // message thread via enqueueWebMidi()).
-class ComposersDesktopPlugin
+class CDPPlugin
 {
 public:
-  ComposersDesktopPlugin()
+  CDPPlugin()
   {
     // Fix the lock-free queue capacities before any thread touches them. Done in
     // the constructor (not prepare()) because the editor can start streaming a
@@ -47,7 +47,7 @@ public:
     mWebMidi.reset(256);
   }
 
-  ~ComposersDesktopPlugin()
+  ~CDPPlugin()
   {
     // Processing has stopped; free every buffer we still own (in-flight, retired,
     // current, and any partial upload).
@@ -59,8 +59,8 @@ public:
     delete mStateBuffer.exchange(nullptr);  // any state-restored buffer not yet adopted
   }
 
-  ComposersDesktopPlugin(const ComposersDesktopPlugin&) = delete;
-  ComposersDesktopPlugin& operator=(const ComposersDesktopPlugin&) = delete;
+  CDPPlugin(const CDPPlugin&) = delete;
+  CDPPlugin& operator=(const CDPPlugin&) = delete;
 
   // --- Metadata --------------------------------------------------------------
   static constexpr std::string_view name() { return "Composer's Desktop Plug-in"; }
@@ -631,4 +631,4 @@ private:
 };
 
 // Verify the plugin satisfies the MPlug Plugin concept at compile time.
-static_assert(mplug::Plugin<ComposersDesktopPlugin>);
+static_assert(mplug::Plugin<CDPPlugin>);

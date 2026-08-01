@@ -74,14 +74,14 @@ struct EditorBridgeContext
 // exact; a degenerate range collapses to 0.
 inline double normalizeParam(std::size_t index, double plainValue)
 {
-  const auto info = ComposersDesktopPlugin::parameterInfo(index);
+  const auto info = CDPPlugin::parameterInfo(index);
   const double span = info.maxValue - info.minValue;
   return span != 0.0 ? (plainValue - info.minValue) / span : 0.0;
 }
 
 inline double denormalizeParam(std::size_t index, double normalizedValue)
 {
-  const auto info = ComposersDesktopPlugin::parameterInfo(index);
+  const auto info = CDPPlugin::parameterInfo(index);
   return info.minValue + normalizedValue * (info.maxValue - info.minValue);
 }
 
@@ -100,7 +100,7 @@ inline int intMember(const choc::value::ValueView& obj, std::string_view name, i
 
 // Dispatch one IPlugSendMsg(obj) call onto the plugin. Called on the UI/message
 // thread (the CHOC binding thread), where allocation is allowed.
-inline void handleIPlugSendMsg(ComposersDesktopPlugin& plugin, const choc::value::ValueView& obj,
+inline void handleIPlugSendMsg(CDPPlugin& plugin, const choc::value::ValueView& obj,
                                const EditorBridgeContext& ctx)
 {
   if (!obj.isObject() || !obj.hasObjectMember("msg"))
@@ -120,7 +120,7 @@ inline void handleIPlugSendMsg(ComposersDesktopPlugin& plugin, const choc::value
   {
     // Send Parameter Value From UI: normalized 0..1 -> plain, then apply.
     const auto index = static_cast<std::size_t>(intMember(obj, "paramIdx", -1));
-    if (index < ComposersDesktopPlugin::parameterCount() && obj.hasObjectMember("value"))
+    if (index < CDPPlugin::parameterCount() && obj.hasObjectMember("value"))
     {
       const double normalized = obj["value"].getWithDefault<double>(0.0);
       const double plain = denormalizeParam(index, normalized);
@@ -134,7 +134,7 @@ inline void handleIPlugSendMsg(ComposersDesktopPlugin& plugin, const choc::value
   {
     // Begin Parameter Change From UI: open a host gesture + suppress echo-back.
     const auto index = static_cast<std::size_t>(intMember(obj, "paramIdx", -1));
-    if (index < ComposersDesktopPlugin::parameterCount())
+    if (index < CDPPlugin::parameterCount())
     {
       if (index < ctx.editingCount)
         ctx.editing[index] = true;
@@ -146,7 +146,7 @@ inline void handleIPlugSendMsg(ComposersDesktopPlugin& plugin, const choc::value
   {
     // End Parameter Change From UI.
     const auto index = static_cast<std::size_t>(intMember(obj, "paramIdx", -1));
-    if (index < ComposersDesktopPlugin::parameterCount())
+    if (index < CDPPlugin::parameterCount())
     {
       if (ctx.host)
         ctx.host->endParameterGesture(index);

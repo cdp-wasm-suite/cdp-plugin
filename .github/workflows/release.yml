@@ -238,7 +238,7 @@ jobs:
         run: cmake -B build/win-${{ matrix.arch }} -A ${{ matrix.arch }}
 
       - name: Build
-        run: cmake --build build/win-${{ matrix.arch }} --config Release --target ComposersDesktopPluginVST3 ComposersDesktopPluginClap ComposersDesktopPluginApp
+        run: cmake --build build/win-${{ matrix.arch }} --config Release --target CDPPluginVST3 CDPPluginClap CDPPluginApp
 
       - name: Package
         shell: bash

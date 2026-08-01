@@ -29,14 +29,14 @@
 // Per-instance editor storage. Mirrors the macOS editor (composers_desktop_plugin_editor_mac.mm):
 // the bidirectional parameter sync, gesture handling and host->UI poll timer are
 // identical — only the native windowing (WebView2 / HWND) differs.
-struct ComposersDesktopPluginEditor
+struct CDPPluginEditor
 {
   std::unique_ptr<choc::ui::WebView> webView;
 
   // True while the UI is actively editing a parameter — host->UI pushes for that
   // index are suppressed so they don't fight the user's drag. Accessed only on
   // the UI/message thread (JS bindings + poll timer), so a plain bool is fine.
-  std::array<bool, ComposersDesktopPlugin::parameterCount()> editing{};
+  std::array<bool, CDPPlugin::parameterCount()> editing{};
 
   // False until the first poll tick has pushed every parameter's current value to
   // the UI (the editor-open initial sync — see the poll timer).
@@ -59,7 +59,7 @@ namespace
 // host -> UI: push a single parameter value into the WebView as the iPlug2
 // SPVFD(paramIdx, normalizedValue) call. The value is normalized 0..1 to match the
 // legacy protocol (see composers_desktop_plugin_editor_bridge.h).
-void pushParameterToJS(ComposersDesktopPluginEditor& editor, std::size_t index, double plainValue)
+void pushParameterToJS(CDPPluginEditor& editor, std::size_t index, double plainValue)
 {
   // Format with the classic ("C") locale so a host that switched the global C++
   // locale to one with a comma decimal separator can't corrupt the value — e.g.
@@ -72,14 +72,14 @@ void pushParameterToJS(ComposersDesktopPluginEditor& editor, std::size_t index, 
 }
 }  // namespace
 
-void* ComposersDesktopPlugin::createEditor(void* parentView, mplug::WindowType windowType)
+void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
 {
   if (windowType != mplug::WindowType::Win32)
     return nullptr;
 
   HWND parent = static_cast<HWND>(parentView);
 
-  auto editor = std::make_unique<ComposersDesktopPluginEditor>();
+  auto editor = std::make_unique<CDPPluginEditor>();
 
   choc::ui::WebView::Options opts;
   // DevTools (right-click -> Inspect) only in dev/debug builds; released
@@ -152,7 +152,7 @@ void* ComposersDesktopPlugin::createEditor(void* parentView, mplug::WindowType w
     // With fetchResource set, CHOC loads the app root ("/") automatically. Only
     // the dev-server path needs an explicit navigate.
     if (useDevServer)
-      webView.navigate(std::string(ComposersDesktopPlugin::editorURL()));
+      webView.navigate(std::string(CDPPlugin::editorURL()));
   };
 
   editor->webView = std::make_unique<choc::ui::WebView>(opts);
@@ -188,7 +188,7 @@ void* ComposersDesktopPlugin::createEditor(void* parentView, mplug::WindowType w
       {
         // Rebrand the web app's menu-bar product label (default "CDP for Web").
         e->webView->evaluateJavascript("if (window.CDPSetAppName) window.CDPSetAppName('CDP');");
-        for (std::size_t i = 0; i < ComposersDesktopPlugin::parameterCount(); ++i)
+        for (std::size_t i = 0; i < CDPPlugin::parameterCount(); ++i)
           pushParameterToJS(*e, i, getParameterValue(i));
         e->sentInitial = true;
       }
@@ -212,7 +212,7 @@ void* ComposersDesktopPlugin::createEditor(void* parentView, mplug::WindowType w
       // A bulk state change (preset / setState) asks for a full re-read.
       if (mEditorHost->consumeFullRefresh())
       {
-        for (std::size_t i = 0; i < ComposersDesktopPlugin::parameterCount(); ++i)
+        for (std::size_t i = 0; i < CDPPlugin::parameterCount(); ++i)
           pushParameterToJS(*e, i, getParameterValue(i));
       }
 
@@ -259,12 +259,12 @@ void* ComposersDesktopPlugin::createEditor(void* parentView, mplug::WindowType w
   return webViewHwnd;
 }
 
-void ComposersDesktopPlugin::destroyEditor()
+void CDPPlugin::destroyEditor()
 {
   if (!mEditorView)
     return;
 
-  auto* editor = static_cast<ComposersDesktopPluginEditor*>(mEditorView);
+  auto* editor = static_cast<CDPPluginEditor*>(mEditorView);
 
   // Stop the poll timer before tearing down the WebView so its callback can't
   // fire against a half-destroyed view.
@@ -280,12 +280,12 @@ void ComposersDesktopPlugin::destroyEditor()
   mEditorView = nullptr;
 }
 
-void ComposersDesktopPlugin::onEditorResize(int width, int height)
+void CDPPlugin::onEditorResize(int width, int height)
 {
   if (!mEditorView)
     return;
 
-  auto* editor = static_cast<ComposersDesktopPluginEditor*>(mEditorView);
+  auto* editor = static_cast<CDPPluginEditor*>(mEditorView);
   if (!editor->webView)
     return;
 

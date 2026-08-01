@@ -15,18 +15,18 @@
 // editors), and re-parent its GtkWidget (choc::ui::WebView::getViewHandle())
 // under the host-provided parentView.
 
-void* ComposersDesktopPlugin::createEditor(void*, mplug::WindowType)
+void* CDPPlugin::createEditor(void*, mplug::WindowType)
 {
   return nullptr;
 }
 
-void ComposersDesktopPlugin::destroyEditor()
+void CDPPlugin::destroyEditor()
 {
   mEditorView = nullptr;
 }
 
 // No in-host WebView on this platform, so nothing to re-fit.
-void ComposersDesktopPlugin::onEditorResize(int, int)
+void CDPPlugin::onEditorResize(int, int)
 {
 }
 

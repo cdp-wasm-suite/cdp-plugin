@@ -10,7 +10,7 @@
 // relative to the loaded plugin binary and serve its files to the WebView through
 // CHOC's fetchResource callback — effectively an in-process web server. This lets
 // the editor load the app offline, instead of from the cdp-web dev server
-// (see ComposersDesktopPlugin::editorURL(), which is now only used as a fallback /
+// (see CDPPlugin::editorURL(), which is now only used as a fallback /
 // when the MY_PLUGIN_EDITOR_DEV_SERVER build option is enabled).
 //
 // All functions are inline; only one of the two backends is compiled per platform,

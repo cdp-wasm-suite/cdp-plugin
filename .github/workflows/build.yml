@@ -290,7 +290,7 @@ jobs:
       # Build the shippable formats explicitly (the headless Cli/Python targets
       # are excluded from the default build in CMakeLists.txt anyway).
       - name: Build
-        run: cmake --build build/windows --target ComposersDesktopPluginVST3 ComposersDesktopPluginClap ComposersDesktopPluginApp
+        run: cmake --build build/windows --target CDPPluginVST3 CDPPluginClap CDPPluginApp
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -351,7 +351,7 @@ jobs:
         run: cmake -B build/win-${{ matrix.arch }} -A ${{ matrix.arch }}
 
       - name: Build
-        run: cmake --build build/win-${{ matrix.arch }} --config Release --target ComposersDesktopPluginVST3 ComposersDesktopPluginClap ComposersDesktopPluginApp
+        run: cmake --build build/win-${{ matrix.arch }} --config Release --target CDPPluginVST3 CDPPluginClap CDPPluginApp
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -388,7 +388,7 @@ jobs:
 
       - name: Build
         run: >-
-          xcodebuild -project build/xcode/ComposersDesktopPlugin.xcodeproj
+          xcodebuild -project build/xcode/CDPPlugin.xcodeproj
           -scheme ALL_BUILD
           -destination 'generic/platform=macOS'
           CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
@@ -420,8 +420,8 @@ jobs:
 
       - name: Build AUv3 extension
         run: >-
-          xcodebuild -project build/ios/ComposersDesktopPlugin.xcodeproj
-          -target ComposersDesktopPluginAUv3Extension
+          xcodebuild -project build/ios/CDPPlugin.xcodeproj
+          -target CDPPluginAUv3Extension
           -configuration Release
           -destination 'generic/platform=iOS'
           CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
@@ -452,8 +452,8 @@ jobs:
 
       - name: Build AUv3 extension
         run: >-
-          xcodebuild -project build/visionos/ComposersDesktopPlugin.xcodeproj
-          -target ComposersDesktopPluginAUv3Extension
+          xcodebuild -project build/visionos/CDPPlugin.xcodeproj
+          -target CDPPluginAUv3Extension
           -configuration Release
           -destination 'generic/platform=visionOS'
           CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO

@@ -227,11 +227,23 @@ void* ComposersDesktopPlugin::createEditor(void* parentView, mplug::WindowType w
     return true;  // keep running
   });
 
-  // choc creates the WebView2 host window as a top-level WS_POPUP. Convert it to
-  // a child of the host-provided parent and size it to the editor. choc's own
-  // window proc handles WM_SIZE and re-fits the WebView2 controller to the new
-  // client area, so resizing the host window resizes the web content too.
+  // choc creates the WebView2 host window as a top-level WS_POPUP; setParentWindow
+  // makes it a child of the host-provided parent. choc's own window proc then
+  // handles WM_SIZE and re-fits the WebView2 controller to the new client area,
+  // so resizing the host window resizes the web content too.
   //
+  // Do NOT hand-roll this with SetParent + SetWindowLongPtr. WebView2 keeps
+  // hosting state tied to the window its controller was created under, and there
+  // is a trap in the obvious implementation: putting WS_VISIBLE into the style
+  // marks the window visible without showing it, so a following ShowWindow() has
+  // nothing to do and sends no WM_SHOWWINDOW — the message choc turns into
+  // ICoreWebView2Controller::put_IsVisible. The browser then stays switched off
+  // and the editor paints blank white, while every window property you can
+  // inspect looks correct. setParentWindow handles that, and the put_ParentWindow
+  // / NotifyParentWindowPositionChanged calls that keep rendering and input
+  // working after a move.
+  editor->webView->setParentWindow(parent);
+
   // The default size is logical; the WebView2 backend lays out CSS pixels against
   // the monitor DPI, so on a scaled display the native window must be sized in
   // physical pixels (logical x scale) for the web app to get its intended CSS size.
@@ -240,10 +252,8 @@ void* ComposersDesktopPlugin::createEditor(void* parentView, mplug::WindowType w
   auto size = defaultEditorSize();
   const int physicalWidth = static_cast<int>(std::lround(size.width * mEditorScale));
   const int physicalHeight = static_cast<int>(std::lround(size.height * mEditorScale));
-  SetParent(webViewHwnd, parent);
-  SetWindowLongPtrW(webViewHwnd, GWL_STYLE, WS_CHILD | WS_VISIBLE);
   SetWindowPos(webViewHwnd, nullptr, 0, 0, physicalWidth, physicalHeight,
-               SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+               SWP_NOZORDER | SWP_FRAMECHANGED);
 
   mEditorView = editor.release();
   return webViewHwnd;
@@ -260,12 +270,12 @@ void ComposersDesktopPlugin::destroyEditor()
   // fire against a half-destroyed view.
   editor->pollTimer.clear();
 
+  // Detach from the host window before the WebView (and its HWND) is torn down.
+  // setParentWindow(nullptr) rather than SetParent(hwnd, nullptr): the latter
+  // leaves the window with WS_CHILD and no parent, which is not a valid state.
   if (editor->webView)
-  {
-    // Detach from the host window before the WebView (and its HWND) is torn down.
-    if (HWND webViewHwnd = static_cast<HWND>(editor->webView->getViewHandle()))
-      SetParent(webViewHwnd, nullptr);
-  }
+    editor->webView->setParentWindow(nullptr);
+
   delete editor;
   mEditorView = nullptr;
 }

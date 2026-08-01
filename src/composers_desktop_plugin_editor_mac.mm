@@ -70,8 +70,6 @@ void* ComposersDesktopPlugin::createEditor(void* parentView, mplug::WindowType w
 
   @autoreleasepool
   {
-    NSView* parent = (__bridge NSView*)parentView;
-
     auto* editor = new ComposersDesktopPluginEditor();
 
     choc::ui::WebView::Options opts;
@@ -191,14 +189,16 @@ void* ComposersDesktopPlugin::createEditor(void* parentView, mplug::WindowType w
       return true;  // keep running
     });
 
+    // setParentWindow rather than a direct addSubview:, to match the Windows
+    // backend, where hand-rolling the reparent silently leaves WebView2 switched
+    // off (see composers_desktop_plugin_editor_win.cpp). It sets the frame and
+    // the autoresizing mask too, so the size below is only the initial one.
     void* webViewHandle = editor->webView->getViewHandle();
+    editor->webView->setParentWindow(parentView);  // nil parentView simply detaches
+
     NSView* webViewNSView = (__bridge NSView*)webViewHandle;
     auto size = defaultEditorSize();
     webViewNSView.frame = NSMakeRect(0, 0, size.width, size.height);
-    webViewNSView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-
-    if (parent)
-      [parent addSubview:webViewNSView];
 
     mEditorView = editor;
     return webViewHandle;
@@ -218,11 +218,10 @@ void ComposersDesktopPlugin::destroyEditor()
     // fire against a half-destroyed view.
     editor->pollTimer.clear();
 
+    // Detach from the host's view hierarchy before the WebView is torn down.
     if (editor->webView)
-    {
-      NSView* webViewNSView = (__bridge NSView*)editor->webView->getViewHandle();
-      [webViewNSView removeFromSuperview];
-    }
+      editor->webView->setParentWindow(nullptr);
+
     delete editor;
     mEditorView = nullptr;
   }

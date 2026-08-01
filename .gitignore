@@ -28,3 +28,6 @@ __pycache__/
 # Plugin GUI — fetched from the @cdp-wasm-suite/cdp-web package, not committed
 # (scripts/fetch-web-dist.sh)
 resources/web-dist/
+
+# Machine-local Makefile overrides (MPLUG_SRC, ...)
+local.mk

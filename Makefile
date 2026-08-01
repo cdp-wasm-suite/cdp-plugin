@@ -10,9 +10,27 @@
 #                       folders (macOS: ~/Library/Audio/Plug-Ins, Windows:
 #                       %LOCALAPPDATA%\Programs\Common, Linux: ~/.vst3 and ~/.clap)
 #   make clean        - remove the build directory
+#
+# Set MPLUG_SRC (here via local.mk, or on the command line) to build against a
+# local MPlug checkout rather than cloning it — see the note below.
 
 OUT := build/release/out
 CMAKE ?= cmake
+
+# Optional machine-local overrides (MPLUG_SRC, CMAKE, PLUGINVAL, ...). Untracked,
+# so it survives `make clean` without putting an absolute path in the repo.
+-include local.mk
+
+# Build against a local MPlug checkout instead of cloning it from GitHub.
+# Unset, CMake's FetchContent does a non-shallow --recursive clone of MPlug and
+# its 11 submodules (~700 MB of history; vst3sdk alone recurses 7 more) with no
+# progress output — which reads as a hang for several minutes. Point this at a
+# checkout on the pinned commit to skip the download entirely:
+#   make release MPLUG_SRC=/path/to/mplug     (or set it in local.mk)
+MPLUG_SRC ?=
+ifneq ($(MPLUG_SRC),)
+  MPLUG_FLAG := -DFETCHCONTENT_SOURCE_DIR_MPLUG=$(MPLUG_SRC)
+endif
 
 # Windows always sets OS=Windows_NT, so the host check works whether make runs
 # with sh (Git Bash/MSYS) or with cmd.exe as its shell — don't reach for uname
@@ -45,24 +63,24 @@ endif
 .PHONY: release debug xcode ios visionos wasm validate install clean
 
 release:
-	cmake --preset release
+	cmake --preset release $(MPLUG_FLAG)
 	cmake --build --preset release
 
 debug:
-	cmake --preset debug
+	cmake --preset debug $(MPLUG_FLAG)
 	cmake --build --preset debug
 
 xcode:
-	cmake --preset xcode
+	cmake --preset xcode $(MPLUG_FLAG)
 
 ios:
-	cmake --preset ios
+	cmake --preset ios $(MPLUG_FLAG)
 
 visionos:
-	cmake --preset visionos
+	cmake --preset visionos $(MPLUG_FLAG)
 
 wasm:
-	emcmake cmake -B build/wasm -G Ninja -DCMAKE_BUILD_TYPE=Release -DMPLUG_BUILD_WCLAP=ON
+	emcmake cmake -B build/wasm -G Ninja -DCMAKE_BUILD_TYPE=Release -DMPLUG_BUILD_WCLAP=ON $(MPLUG_FLAG)
 	cmake --build build/wasm
 
 # auval loads the component from ~/Library, so install first.

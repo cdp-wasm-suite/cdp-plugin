@@ -31,3 +31,7 @@ resources/web-dist/
 
 # Machine-local Makefile overrides (MPLUG_SRC, ...)
 local.mk
+
+# Maintainer tooling only (npm run vendor:sampler) — the C++ build needs none of it.
+node_modules/
+package-lock.json

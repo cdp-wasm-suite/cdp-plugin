@@ -1,0 +1,9 @@
+{
+  "_comment": "Provenance for the vendored CDPSampler.h. Do not edit that header here — change it in the cdp-sampler repo and re-run `npm run vendor:sampler`. Verified in CI by `node scripts/vendor-sampler.mjs --check`.",
+  "source": "repo",
+  "repo": "cdp-wasm-suite/cdp-sampler",
+  "path": "include/CDPSampler.h",
+  "ref": "refs/heads/main",
+  "commit": "a527e88417b2f720d9eb3951f75b8f8f9a5f1571",
+  "sha256": "3c5cc82b8a52cac06760b2ad8c9c6357613b3fa8c3cb435c4e95aab31f3c52b6"
+}

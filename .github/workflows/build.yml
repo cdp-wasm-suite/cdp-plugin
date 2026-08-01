@@ -95,6 +95,24 @@ jobs:
           done
 
   # ---------------------------------------------------------------------------
+  # Vendored cdp-sampler header — drift gate.
+  # src/cdp-sampler/CDPSampler.h is a committed copy of cdp-sampler's header (it
+  # is compiled into the plugin, so it can't be fetched at configure time), and
+  # cdp-sampler is the source of truth. This fails if the copy was edited here,
+  # if it no longer matches the commit pinned in VENDOR.json, or if it was last
+  # vendored from a local checkout. Public repo, so no token; seconds to run.
+  # ---------------------------------------------------------------------------
+  vendor-check:
+    name: Vendored cdp-sampler header
+    if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Verify src/cdp-sampler/CDPSampler.h matches upstream
+        run: node scripts/vendor-sampler.mjs --check
+
+  # ---------------------------------------------------------------------------
   # macOS — VST3 / AUv2 / CLAP / App
   # ---------------------------------------------------------------------------
   macos:

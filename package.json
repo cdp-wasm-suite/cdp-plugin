@@ -1,0 +1,12 @@
+{
+  "name": "cdp-plugin-tooling",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Maintainer tooling only — vendors the cdp-sampler DSP header into src/cdp-sampler. The C++/CMake build needs none of this; it reads the committed copy directly. (The cdp-web GUI is not vendored: scripts/fetch-web-dist.sh fetches the published package.)",
+  "type": "module",
+  "scripts": {
+    "vendor:sampler": "node scripts/vendor-sampler.mjs",
+    "vendor:sampler:local": "node scripts/vendor-sampler.mjs --local",
+    "check:sampler": "node scripts/vendor-sampler.mjs --check"
+  }
+}

@@ -21,8 +21,10 @@
 
 // The shared CDP sampler DSP core: a framework-agnostic, header-only polyphonic
 // one-shot sampler (voice pool, voice allocation, cubic-Hermite interpolation),
-// vendored from the @olilarkin/cdp-sampler repo so the plugin and the cdp-web
-// AudioWorklet run byte-identical code.
+// vendored byte-for-byte from the cdp-sampler repo so the plugin and the cdp-web
+// AudioWorklet run identical code. Do NOT edit the vendored copy: change it in
+// cdp-sampler, then `npm run vendor:sampler` (see src/cdp-sampler/VENDOR.json;
+// CI fails if the two diverge).
 #include "cdp-sampler/CDPSampler.h"
 
 // A MIDI note-triggered polyphonic sampler. The GUI is the CDP web app

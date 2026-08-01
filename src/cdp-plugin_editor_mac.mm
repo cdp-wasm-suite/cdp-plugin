@@ -1,4 +1,4 @@
-#include "composers_desktop_plugin.h"
+#include "cdp-plugin.h"
 
 #if defined(__APPLE__)
 
@@ -9,9 +9,9 @@
 #include <choc/containers/choc_Value.h>
 
 // Locates + serves the bundled CDP web app from Contents/Resources/web.
-#include "composers_desktop_plugin_editor_resources.h"
+#include "cdp-plugin_editor_resources.h"
 // Dispatches the web app's IPlugSendMsg (sample stream + web-keyboard MIDI).
-#include "composers_desktop_plugin_editor_bridge.h"
+#include "cdp-plugin_editor_bridge.h"
 
 #include <array>
 #include <locale>
@@ -49,7 +49,7 @@ namespace
 {
 // host -> UI: push a single parameter value into the WebView as the iPlug2
 // SPVFD(paramIdx, normalizedValue) call. The value is normalized 0..1 to match the
-// legacy protocol (see composers_desktop_plugin_editor_bridge.h).
+// legacy protocol (see cdp-plugin_editor_bridge.h).
 void pushParameterToJS(CDPPluginEditor& editor, std::size_t index, double plainValue)
 {
   // Format with the classic ("C") locale so a host that switched the global C++
@@ -191,7 +191,7 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
 
     // setParentWindow rather than a direct addSubview:, to match the Windows
     // backend, where hand-rolling the reparent silently leaves WebView2 switched
-    // off (see composers_desktop_plugin_editor_win.cpp). It sets the frame and
+    // off (see cdp-plugin_editor_win.cpp). It sets the frame and
     // the autoresizing mask too, so the size below is only the initial one.
     void* webViewHandle = editor->webView->getViewHandle();
     editor->webView->setParentWindow(parentView);  // nil parentView simply detaches

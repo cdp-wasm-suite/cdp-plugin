@@ -30,7 +30,7 @@
 // A MIDI note-triggered polyphonic sampler. The GUI is the CDP web app
 // (cdp-web) running in the WebView editor: it renders audio offline, then
 // streams the finished PCM buffer to this class over the JS->C++ bridge (see
-// composers_desktop_plugin_editor_bridge.h). The buffer is played back as a
+// cdp-plugin_editor_bridge.h). The buffer is played back as a
 // pitched sampler under MIDI control — both host MIDI (delivered to process() as
 // a MidiEventsView) and the web app's on-screen keyboard (delivered on the
 // message thread via enqueueWebMidi()).
@@ -171,7 +171,7 @@ public:
 
   // The editor loads the CDP web app (the node-graph patcher UI). By default it's
   // served from bundled assets in Contents/Resources/web via CHOC's in-process web
-  // server (see composers_desktop_plugin_editor_resources.h). This URL is the
+  // server (see cdp-plugin_editor_resources.h). This URL is the
   // cdp-web dev server, used only as a fallback (when the bundled assets are
   // missing) or when the plugin is configured with the CMake option
   // -DMY_PLUGIN_EDITOR_DEV_SERVER=ON for live-reload development — run

@@ -14,7 +14,7 @@
 ; The installer lays down a single shared copy of the ~20 MB web app under
 ; Common Files and strips the per-format embedded copy from the VST3 bundle;
 ; every installed format then resolves the shared copy through the editor's
-; resource-candidate list (see composers_desktop_plugin_editor_resources.h).
+; resource-candidate list (see cdp-plugin_editor_resources.h).
 ;
 ; Code signing is deferred — SmartScreen will warn on this unsigned installer.
 

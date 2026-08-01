@@ -1,7 +1,7 @@
 #pragma once
 
 // Shared editor-resource plumbing for the desktop WebView backends
-// (composers_desktop_plugin_editor_mac.mm / composers_desktop_plugin_editor_win.cpp).
+// (cdp-plugin_editor_mac.mm / cdp-plugin_editor_win.cpp).
 //
 // The CDP web app (the node-graph patcher UI, ~18 MB of HTML/JS/WASM produced by
 // `npm run bundle` in cdp-web) is shipped inside each plugin/app bundle under

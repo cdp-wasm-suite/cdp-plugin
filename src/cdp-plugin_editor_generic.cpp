@@ -1,9 +1,9 @@
-#include "composers_desktop_plugin.h"
+#include "cdp-plugin.h"
 
 #if !defined(__APPLE__) && !defined(_WIN32)
 
-// The in-host WebView editor is implemented for macOS (composers_desktop_plugin_editor_mac.mm)
-// and Windows (composers_desktop_plugin_editor_win.cpp). On Linux (and other platforms) the
+// The in-host WebView editor is implemented for macOS (cdp-plugin_editor_mac.mm)
+// and Windows (cdp-plugin_editor_win.cpp). On Linux (and other platforms) the
 // host shows its generic parameter UI, and the standalone App provides a full
 // cross-platform WebView UI. Returning nullptr here keeps all plugin formats
 // building and loading cleanly.

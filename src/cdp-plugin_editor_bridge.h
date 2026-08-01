@@ -1,7 +1,7 @@
 #pragma once
 
 // Shared JS->C++ message dispatch for the desktop WebView backends
-// (composers_desktop_plugin_editor_mac.mm / composers_desktop_plugin_editor_win.cpp).
+// (cdp-plugin_editor_mac.mm / cdp-plugin_editor_win.cpp).
 //
 // The CDP web app (cdp-web) talks to the native host through a single injected
 // global, window.IPlugSendMsg(obj) — a legacy iPlug2 convention the vendored web
@@ -33,7 +33,7 @@
 // All functions are inline; only one backend is compiled per platform, so there
 // are no ODR concerns between them.
 
-#include "composers_desktop_plugin.h"
+#include "cdp-plugin.h"
 
 #include <choc/containers/choc_Value.h>
 #include <choc/memory/choc_Base64.h>

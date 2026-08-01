@@ -1,4 +1,4 @@
-#include "composers_desktop_plugin.h"
+#include "cdp-plugin.h"
 
 #if defined(_WIN32)
 
@@ -15,9 +15,9 @@
 #include <choc/containers/choc_Value.h>
 
 // Locates + serves the bundled CDP web app from Contents/Resources/web.
-#include "composers_desktop_plugin_editor_resources.h"
+#include "cdp-plugin_editor_resources.h"
 // Dispatches the web app's IPlugSendMsg (sample stream + web-keyboard MIDI).
-#include "composers_desktop_plugin_editor_bridge.h"
+#include "cdp-plugin_editor_bridge.h"
 
 #include <array>
 #include <cmath>
@@ -26,7 +26,7 @@
 #include <sstream>
 #include <string>
 
-// Per-instance editor storage. Mirrors the macOS editor (composers_desktop_plugin_editor_mac.mm):
+// Per-instance editor storage. Mirrors the macOS editor (cdp-plugin_editor_mac.mm):
 // the bidirectional parameter sync, gesture handling and host->UI poll timer are
 // identical — only the native windowing (WebView2 / HWND) differs.
 struct CDPPluginEditor
@@ -58,7 +58,7 @@ namespace
 {
 // host -> UI: push a single parameter value into the WebView as the iPlug2
 // SPVFD(paramIdx, normalizedValue) call. The value is normalized 0..1 to match the
-// legacy protocol (see composers_desktop_plugin_editor_bridge.h).
+// legacy protocol (see cdp-plugin_editor_bridge.h).
 void pushParameterToJS(CDPPluginEditor& editor, std::size_t index, double plainValue)
 {
   // Format with the classic ("C") locale so a host that switched the global C++

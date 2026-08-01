@@ -103,7 +103,7 @@ if(MY_PLUGIN_APPLE_EMBEDDED)
   mplug_add_auv3(CDPPluginAUv3
     PLUGIN_CLASS CDPPlugin
     DISPLAY_NAME "cdp-plugin"
-    PLUGIN_HEADER src/composers_desktop_plugin.h
+    PLUGIN_HEADER src/cdp-plugin.h
     IDENTIFIER "com.olilarkin.cdp"
     SUBTYPE "CDPl"
     MANUFACTURER "oliL"
@@ -111,7 +111,7 @@ if(MY_PLUGIN_APPLE_EMBEDDED)
     TYPE "aumu"
     VERSION "${PROJECT_VERSION}"
     DESCRIPTION "CDP sampler instrument"
-    SOURCES src/composers_desktop_plugin.cpp
+    SOURCES src/cdp-plugin.cpp
   )
 
 elseif(NOT EMSCRIPTEN)
@@ -123,21 +123,21 @@ elseif(NOT EMSCRIPTEN)
   # (The old resources/web/editor.html → EmbedWebResource.cmake → myplugin::editorHTML()
   # embed pipeline has been removed: the editor now serves the vendored CDP web app
   # from resources/web-dist/ in-process via CHOC's fetchResource, so the embedded
-  # HTML string was dead code. See composers_desktop_plugin_editor_resources.h.)
+  # HTML string was dead code. See cdp-plugin_editor_resources.h.)
 
   if(APPLE)
-    set(MY_PLUGIN_EDITOR_SOURCES src/composers_desktop_plugin_editor_mac.mm)
+    set(MY_PLUGIN_EDITOR_SOURCES src/cdp-plugin_editor_mac.mm)
     find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
     find_library(WEBKIT_FRAMEWORK WebKit REQUIRED)
     set(MY_PLUGIN_EDITOR_LIBS ${COCOA_FRAMEWORK} ${WEBKIT_FRAMEWORK})
   elseif(WIN32)
-    set(MY_PLUGIN_EDITOR_SOURCES src/composers_desktop_plugin_editor_win.cpp)
+    set(MY_PLUGIN_EDITOR_SOURCES src/cdp-plugin_editor_win.cpp)
     # No extra link libraries: choc's WebView2 backend calls CoInitialize (ole32,
     # part of the MSVC default library set) and loads WebView2Loader.dll /
     # shlwapi.dll dynamically, so nothing needs naming explicitly here.
     set(MY_PLUGIN_EDITOR_LIBS)
   else()
-    set(MY_PLUGIN_EDITOR_SOURCES src/composers_desktop_plugin_editor_generic.cpp)
+    set(MY_PLUGIN_EDITOR_SOURCES src/cdp-plugin_editor_generic.cpp)
     set(MY_PLUGIN_EDITOR_LIBS)
   endif()
 
@@ -152,7 +152,7 @@ elseif(NOT EMSCRIPTEN)
   mplug_add_plugin(CDPPlugin
     PLUGIN_CLASS CDPPlugin
     DISPLAY_NAME "cdp-plugin"
-    PLUGIN_HEADER src/composers_desktop_plugin.h
+    PLUGIN_HEADER src/cdp-plugin.h
     PLUGIN_ID "com.olilarkin.cdp"
     VERSION "${PROJECT_VERSION}"
     VENDOR "Oli Larkin"
@@ -165,8 +165,8 @@ elseif(NOT EMSCRIPTEN)
     VST3_CATEGORY "Instrument|Synth"
     APP_NAME "cdp-plugin"
     SOURCES
-      src/composers_desktop_plugin.h
-      src/composers_desktop_plugin.cpp
+      src/cdp-plugin.h
+      src/cdp-plugin.cpp
     EDITOR_SOURCES
       ${MY_PLUGIN_EDITOR_SOURCES}
     LINK_LIBRARIES
@@ -262,7 +262,7 @@ elseif(NOT EMSCRIPTEN)
 
   # --------------------------------------------------------------------------
   # Copy the bundled CDP web app next to / into each format so the editor can
-  # serve it offline (see composers_desktop_plugin_editor_resources.h). Skipped
+  # serve it offline (see cdp-plugin_editor_resources.h). Skipped
   # when developing against the dev server.
   #
   #   * macOS  — every format is a bundle; the assets ride inside
@@ -366,14 +366,14 @@ if(MPLUG_BUILD_WCLAP)
   mplug_add_wclap(CDPPluginWClap
     PLUGIN_CLASS CDPPlugin
     BUNDLE_NAME "cdp-plugin"
-    PLUGIN_HEADER src/composers_desktop_plugin.h
+    PLUGIN_HEADER src/cdp-plugin.h
     PLUGIN_ID "com.olilarkin.cdp"
     VENDOR "Oli Larkin"
     VERSION "${PROJECT_VERSION}"
     DESCRIPTION "CDP sampler instrument"
     FEATURES "instrument" "sampler" "synthesizer" "stereo"
     SOURCES
-      src/composers_desktop_plugin.h
-      src/composers_desktop_plugin.cpp
+      src/cdp-plugin.h
+      src/cdp-plugin.cpp
   )
 endif()

@@ -9,6 +9,8 @@
 #define NOMINMAX  // keep windows.h min/max macros from clobbering choc's std::max()
 #endif
 #include <windows.h>
+#include <ole2.h>
+#include <shlobj.h>
 
 #include <choc/gui/choc_WebView.h>
 #include <choc/gui/choc_MessageLoop.h>
@@ -21,17 +23,87 @@
 
 #include <array>
 #include <cmath>
+#include <cwctype>
+#include <filesystem>
 #include <locale>
 #include <memory>
+#include <new>
 #include <sstream>
 #include <string>
+#include <string_view>
+
+namespace
+{
+// OLE is apartment-scoped. Declaring this before the WebView makes it the last
+// editor member destroyed, so WebView2 has already released its COM objects when
+// the matching OleUninitialize runs.
+struct OleSession
+{
+  bool initialized = false;
+  ~OleSession()
+  {
+    if (initialized)
+      OleUninitialize();
+  }
+};
+
+class FileDropSource final : public IDropSource
+{
+public:
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** object) override
+  {
+    if (!object)
+      return E_POINTER;
+    *object = nullptr;
+    if (IsEqualIID(iid, IID_IUnknown) || IsEqualIID(iid, IID_IDropSource))
+    {
+      *object = static_cast<IDropSource*>(this);
+      AddRef();
+      return S_OK;
+    }
+    return E_NOINTERFACE;
+  }
+
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++mReferences; }
+
+  ULONG STDMETHODCALLTYPE Release() override
+  {
+    const ULONG references = --mReferences;
+    if (references == 0)
+      delete this;
+    return references;
+  }
+
+  HRESULT STDMETHODCALLTYPE QueryContinueDrag(BOOL escapePressed, DWORD keyState) override
+  {
+    if (escapePressed)
+      return DRAGDROP_S_CANCEL;
+    return (keyState & MK_LBUTTON) ? S_OK : DRAGDROP_S_DROP;
+  }
+
+  HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD) override
+  {
+    return DRAGDROP_S_USEDEFAULTCURSORS;
+  }
+
+private:
+  std::atomic<ULONG> mReferences{1};
+};
+}  // namespace
 
 // Per-instance editor storage. Mirrors the macOS editor (cdp-plugin_editor_mac.mm):
 // the bidirectional parameter sync, gesture handling and host->UI poll timer are
 // identical — only the native windowing (WebView2 / HWND) differs.
 struct CDPPluginEditor
 {
+  OleSession ole;
   std::unique_ptr<choc::ui::WebView> webView;
+
+  // The current rendered WAV is materialised before pointer-down. BDGFUI waits
+  // for Windows' configured drag threshold, then offers this existing file to
+  // the destination through the Shell's IDataObject implementation.
+  std::filesystem::path preparedDragPath;
+  bool dragStarted = false;
 
   // True while the UI is actively editing a parameter — host->UI pushes for that
   // index are suppressed so they don't fight the user's drag. Accessed only on
@@ -56,6 +128,123 @@ struct CDPPluginEditor
 
 namespace
 {
+std::wstring utf8ToWide(const std::string& text)
+{
+  if (text.empty())
+    return {};
+  const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                          text.data(), static_cast<int>(text.size()),
+                                          nullptr, 0);
+  if (length <= 0)
+    return {};
+  std::wstring result(static_cast<std::size_t>(length), L'\0');
+  MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+                      static_cast<int>(text.size()), result.data(), length);
+  return result;
+}
+
+std::wstring safeWavName(const std::string& requestedName)
+{
+  std::wstring name = std::filesystem::path(utf8ToWide(requestedName)).filename().wstring();
+  for (wchar_t& character : name)
+    if (character < 32 || std::wstring_view(L"<>:\"/\\|?*").find(character) != std::wstring_view::npos)
+      character = L'_';
+  while (!name.empty() && (name.back() == L'.' || name.back() == L' '))
+    name.pop_back();
+  if (name.empty())
+    name = L"cdp-output.wav";
+
+  std::wstring extension = std::filesystem::path(name).extension().wstring();
+  std::transform(extension.begin(), extension.end(), extension.begin(),
+                 [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+  if (extension != L".wav")
+    name += L".wav";
+  return name;
+}
+
+void cancelPreparedDrag(CDPPluginEditor& editor)
+{
+  if (!editor.preparedDragPath.empty() && !editor.dragStarted)
+  {
+    std::error_code error;
+    std::filesystem::remove(editor.preparedDragPath, error);
+    std::filesystem::remove(editor.preparedDragPath.parent_path(), error);
+  }
+  editor.preparedDragPath.clear();
+  editor.dragStarted = false;
+}
+
+void prepareNativeDrag(CDPPlugin& plugin, CDPPluginEditor& editor,
+                       const std::string& requestedName)
+{
+  cancelPreparedDrag(editor);
+  if (!editor.ole.initialized)
+    return;
+
+  std::array<wchar_t, 32768> tempPath{};
+  const DWORD length = GetTempPathW(static_cast<DWORD>(tempPath.size()), tempPath.data());
+  if (length == 0 || length >= tempPath.size())
+    return;
+
+  static std::atomic<std::uint64_t> nextDirectory{0};
+  const std::wstring uniqueName = std::to_wstring(GetCurrentProcessId()) + L"-"
+                                + std::to_wstring(GetTickCount64()) + L"-"
+                                + std::to_wstring(++nextDirectory);
+  const std::filesystem::path directory = std::filesystem::path(tempPath.data())
+                                        / L"cdp-plugin" / uniqueName;
+  std::error_code error;
+  if (!std::filesystem::create_directories(directory, error) || error)
+    return;
+
+  const std::filesystem::path path = directory / safeWavName(requestedName);
+  if (!plugin.writeRenderedSampleWav(path))
+  {
+    std::filesystem::remove(path, error);
+    std::filesystem::remove(directory, error);
+    return;
+  }
+  editor.preparedDragPath = path;
+}
+
+void beginNativeDrag(CDPPluginEditor& editor)
+{
+  if (!editor.ole.initialized || editor.preparedDragPath.empty()
+      || editor.dragStarted || !editor.webView
+      || (GetAsyncKeyState(VK_LBUTTON) & 0x8000) == 0)
+    return;
+
+  HWND view = static_cast<HWND>(editor.webView->getViewHandle());
+  POINT start{};
+  if (!view || !GetCursorPos(&start) || !DragDetect(view, start))
+    return;
+
+  IShellItem* item = nullptr;
+  if (FAILED(SHCreateItemFromParsingName(editor.preparedDragPath.c_str(), nullptr,
+                                         IID_PPV_ARGS(&item))))
+    return;
+
+  IDataObject* dataObject = nullptr;
+  const HRESULT dataResult = item->BindToHandler(nullptr, BHID_DataObject,
+                                                  IID_PPV_ARGS(&dataObject));
+  item->Release();
+  if (FAILED(dataResult) || !dataObject)
+    return;
+
+  auto* source = new (std::nothrow) FileDropSource();
+  if (!source)
+  {
+    dataObject->Release();
+    return;
+  }
+
+  editor.dragStarted = true;
+  DWORD effect = DROPEFFECT_NONE;
+  DoDragDrop(dataObject, source, DROPEFFECT_COPY, &effect);
+  editor.dragStarted = false;
+  source->Release();
+  dataObject->Release();
+}
+
 // host -> UI: push a single parameter value into the WebView as the iPlug2
 // SPVFD(paramIdx, normalizedValue) call. The value is normalized 0..1 to match the
 // legacy protocol (see cdp-plugin_editor_bridge.h).
@@ -80,6 +269,7 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
   HWND parent = static_cast<HWND>(parentView);
 
   auto editor = std::make_unique<CDPPluginEditor>();
+  editor->ole.initialized = SUCCEEDED(OleInitialize(nullptr));
 
   choc::ui::WebView::Options opts;
   // DevTools (right-click -> Inspect) only in dev/debug builds; released
@@ -143,8 +333,16 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
     {
       if (args.isArray() && args.size() >= 1)
       {
+        const auto obj = args[0];
+        const std::string msg = obj.isObject() && obj.hasObjectMember("msg")
+          ? obj["msg"].getWithDefault<std::string>("") : std::string{};
+        if (msg == "PDGFUI")
+          prepareNativeDrag(*this, *e, obj.hasObjectMember("data")
+            ? obj["data"].getWithDefault<std::string>("cdp-output.wav") : "cdp-output.wav");
+        else if (msg == "BDGFUI")
+          beginNativeDrag(*e);
         myplugin::EditorBridgeContext ctx{mEditorHost, e->editing.data(), e->editing.size(), &e->webReady};
-        myplugin::handleIPlugSendMsg(*this, args[0], ctx);
+        myplugin::handleIPlugSendMsg(*this, obj, ctx);
       }
       return {};
     });
@@ -186,6 +384,8 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
     {
       if (!e->sentInitial)
       {
+        if (e->ole.initialized)
+          e->webView->evaluateJavascript("window.CDPNativeDragOut = true;");
         // Rebrand the web app's menu-bar product label (default "CDP for Web").
         e->webView->evaluateJavascript("if (window.CDPSetAppName) window.CDPSetAppName('CDP');");
         for (std::size_t i = 0; i < CDPPlugin::parameterCount(); ++i)
@@ -269,6 +469,7 @@ void CDPPlugin::destroyEditor()
   // Stop the poll timer before tearing down the WebView so its callback can't
   // fire against a half-destroyed view.
   editor->pollTimer.clear();
+  cancelPreparedDrag(*editor);
 
   // Detach from the host window before the WebView (and its HWND) is torn down.
   // setParentWindow(nullptr) rather than SetParent(hwnd, nullptr): the latter

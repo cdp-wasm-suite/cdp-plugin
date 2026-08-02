@@ -132,10 +132,9 @@ elseif(NOT EMSCRIPTEN)
     set(MY_PLUGIN_EDITOR_LIBS ${COCOA_FRAMEWORK} ${WEBKIT_FRAMEWORK})
   elseif(WIN32)
     set(MY_PLUGIN_EDITOR_SOURCES src/cdp-plugin_editor_win.cpp)
-    # No extra link libraries: choc's WebView2 backend calls CoInitialize (ole32,
-    # part of the MSVC default library set) and loads WebView2Loader.dll /
-    # shlwapi.dll dynamically, so nothing needs naming explicitly here.
-    set(MY_PLUGIN_EDITOR_LIBS)
+    # The editor's native file drag uses the OLE drag loop and asks the Windows
+    # Shell to expose the rendered WAV as an IDataObject.
+    set(MY_PLUGIN_EDITOR_LIBS ole32 shell32 uuid)
   else()
     set(MY_PLUGIN_EDITOR_SOURCES src/cdp-plugin_editor_generic.cpp)
     set(MY_PLUGIN_EDITOR_LIBS)

@@ -19,10 +19,50 @@
 #include <sstream>
 #include <string>
 
+struct CDPPluginEditor;
+static void nativeDragSessionEnded(CDPPluginEditor*, NSDragOperation);
+
+@interface CDPPluginDragSource : NSObject <NSDraggingSource>
+@property(nonatomic, copy) NSString* filePath;
+@property(nonatomic, assign) CDPPluginEditor* editor;
+@end
+
+@implementation CDPPluginDragSource
+- (void)dealloc
+{
+  self.filePath = nil;
+  [super dealloc];
+}
+
+- (NSDragOperation)draggingSession:(NSDraggingSession*)session
+        sourceOperationMaskForDraggingContext:(NSDraggingContext)context
+{
+  return NSDragOperationCopy;
+}
+
+- (void)draggingSession:(NSDraggingSession*)session
+           endedAtPoint:(NSPoint)screenPoint
+              operation:(NSDragOperation)operation
+{
+  nativeDragSessionEnded(self.editor, operation);
+}
+@end
+
 // Per-instance editor storage.
 struct CDPPluginEditor
 {
   std::unique_ptr<choc::ui::WebView> webView;
+
+  // Native drag state. The web UI prepares a file before movement and explicitly
+  // arms one gesture from the Drag button; the event monitor then starts AppKit
+  // synchronously on that gesture's first non-Option mouse drag.
+  // Objective-C objects are manually retained in this non-ARC translation unit.
+  NSString* preparedDragPath = nil;
+  CDPPluginDragSource* dragSource = nil;
+  NSEvent* dragMouseDown = nil;
+  id mouseDownMonitor = nil;
+  bool dragArmed = false;
+  bool dragStarted = false;
 
   // True while the UI is actively editing a parameter — host->UI pushes for that
   // index are suppressed so they don't fight the user's drag. Accessed only on
@@ -45,8 +85,94 @@ struct CDPPluginEditor
   choc::messageloop::Timer pollTimer;
 };
 
+static void nativeDragSessionEnded(CDPPluginEditor* editor, NSDragOperation)
+{
+  // Keep the file reusable, but consume this gesture completely. A new native
+  // drag must be armed by a fresh BDGFUI from the Output button.
+  if (editor)
+  {
+    editor->dragArmed = false;
+    editor->dragStarted = false;
+    [editor->dragMouseDown release];
+    editor->dragMouseDown = nil;
+  }
+}
+
 namespace
 {
+void cancelPreparedDrag(CDPPluginEditor& editor)
+{
+  if (editor.preparedDragPath && !editor.dragStarted)
+  {
+    [[NSFileManager defaultManager] removeItemAtPath:editor.preparedDragPath error:nil];
+    [[NSFileManager defaultManager] removeItemAtPath:editor.preparedDragPath.stringByDeletingLastPathComponent error:nil];
+  }
+  [editor.preparedDragPath release];
+  editor.preparedDragPath = nil;
+  editor.dragArmed = false;
+  editor.dragStarted = false;
+}
+
+void prepareNativeDrag(CDPPlugin& plugin, CDPPluginEditor& editor, const std::string& requestedName)
+{
+  cancelPreparedDrag(editor);
+
+  NSString* name = [NSString stringWithUTF8String:requestedName.c_str()];
+  name = name.lastPathComponent;
+  if (name.length == 0)
+    name = @"cdp-output.wav";
+  if (![name.pathExtension.lowercaseString isEqualToString:@"wav"])
+    name = [name stringByAppendingPathExtension:@"wav"];
+
+  NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:
+    [@"cdp-plugin/" stringByAppendingString:NSUUID.UUID.UUIDString]];
+  if (![[NSFileManager defaultManager] createDirectoryAtPath:directory
+                                 withIntermediateDirectories:YES attributes:nil error:nil])
+    return;
+
+  NSString* path = [directory stringByAppendingPathComponent:name];
+  if (!plugin.writeRenderedSampleWav(std::filesystem::path(path.fileSystemRepresentation)))
+  {
+    [[NSFileManager defaultManager] removeItemAtPath:directory error:nil];
+    return;
+  }
+  editor.preparedDragPath = [path copy];
+}
+
+void beginNativeDrag(CDPPluginEditor& editor, NSEvent* event)
+{
+  if (!editor.dragArmed || !editor.preparedDragPath || editor.dragStarted
+      || !editor.webView || !event)
+    return;
+
+  // Consume the arm before entering AppKit. Even if session creation fails or
+  // the drag is cancelled, no later WebView movement can reuse this mouse-down.
+  editor.dragArmed = false;
+
+  NSView* view = (__bridge NSView*)editor.webView->getViewHandle();
+  NSWindow* window = view.window;
+  if (!view || !window)
+    return;
+
+  NSURL* fileURL = [NSURL fileURLWithPath:editor.preparedDragPath];
+  NSDraggingItem* item = [[[NSDraggingItem alloc] initWithPasteboardWriter:fileURL] autorelease];
+  NSPoint location = [view convertPoint:event.locationInWindow fromView:nil];
+  NSImage* image = [[NSWorkspace sharedWorkspace] iconForFile:editor.preparedDragPath];
+  [image setSize:NSMakeSize(48, 48)];
+  [item setDraggingFrame:NSMakeRect(location.x - 24, location.y - 24, 48, 48) contents:image];
+
+  [editor.dragSource release];
+  editor.dragSource = [[CDPPluginDragSource alloc] init];
+  editor.dragSource.filePath = editor.preparedDragPath;
+  editor.dragSource.editor = &editor;
+  NSDraggingSession* session = [view beginDraggingSessionWithItems:@[item] event:event source:editor.dragSource];
+  if (session)
+  {
+    session.animatesToStartingPositionsOnCancelOrFail = YES;
+    editor.dragStarted = true;
+  }
+}
+
 // host -> UI: push a single parameter value into the WebView as the iPlug2
 // SPVFD(paramIdx, normalizedValue) call. The value is normalized 0..1 to match the
 // legacy protocol (see cdp-plugin_editor_bridge.h).
@@ -107,6 +233,52 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
 
     editor->webView = std::make_unique<choc::ui::WebView>(opts);
 
+    // WKWebView delivers script messages asynchronously, after AppKit's current
+    // event has gone away. Preserve the initiating mouse-down, then take over a
+    // normal drag synchronously at its first native movement. The monitor observes
+    // but never consumes or alters either event.
+    editor->mouseDownMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:
+      (NSEventMaskLeftMouseDown | NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp)
+      handler:^NSEvent*(NSEvent* event)
+      {
+        if (editor->webView)
+        {
+          NSView* view = (__bridge NSView*)editor->webView->getViewHandle();
+          const NSPoint point = [view convertPoint:event.locationInWindow fromView:nil];
+          if (event.type == NSEventTypeLeftMouseDown)
+          {
+            // Every press invalidates the previous gesture. BDGFUI, delivered by
+            // the Drag button's pointerdown handler, arms this new press shortly
+            // after the native mouse-down has been retained here.
+            editor->dragArmed = false;
+            [editor->dragMouseDown release];
+            editor->dragMouseDown = nil;
+            if (event.window == view.window && NSPointInRect(point, view.bounds))
+              editor->dragMouseDown = [event retain];
+          }
+          else if (event.type == NSEventTypeLeftMouseDragged && editor->dragMouseDown)
+          {
+            // Own normal mouse drags once they cross a conventional movement
+            // threshold. Option explicitly reserves the gesture for the patcher's
+            // Output -> Source interaction.
+            const NSPoint start = editor->dragMouseDown.locationInWindow;
+            const double dx = event.locationInWindow.x - start.x;
+            const double dy = event.locationInWindow.y - start.y;
+            if (editor->dragArmed && editor->preparedDragPath && !editor->dragStarted
+                && (event.modifierFlags & NSEventModifierFlagOption) == 0
+                && std::hypot(dx, dy) >= 8.0)
+              beginNativeDrag(*editor, event);
+          }
+          else if (event.type == NSEventTypeLeftMouseUp)
+          {
+            editor->dragArmed = false;
+            [editor->dragMouseDown release];
+            editor->dragMouseDown = nil;
+          }
+        }
+        return event;
+      }];
+
     // JS -> C++: the CDP web app's legacy iPlug2 message channel.
     // window.IPlugSendMsg(obj) carries every JS->host message: parameter edits and
     // gestures (SPVFUI/BPCFUI/EPCFUI), streamed sample buffers (SAMFUI) and
@@ -118,8 +290,17 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
     {
       if (args.isArray() && args.size() >= 1)
       {
+        const auto obj = args[0];
+        const std::string msg = obj.isObject() && obj.hasObjectMember("msg")
+          ? obj["msg"].getWithDefault<std::string>("") : std::string{};
+        if (msg == "PDGFUI")
+          prepareNativeDrag(*this, *editor, obj.hasObjectMember("data")
+            ? obj["data"].getWithDefault<std::string>("cdp-output.wav") : "cdp-output.wav");
+        else if (msg == "BDGFUI")
+          editor->dragArmed = editor->preparedDragPath && editor->dragMouseDown
+            && ([NSEvent pressedMouseButtons] & 1u) != 0;
         myplugin::EditorBridgeContext ctx{mEditorHost, editor->editing.data(), editor->editing.size(), &editor->webReady};
-        myplugin::handleIPlugSendMsg(*this, args[0], ctx);
+        myplugin::handleIPlugSendMsg(*this, obj, ctx);
       }
       return {};
     });
@@ -149,6 +330,7 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
         // rebrand the web app's menu-bar product label (default "CDP for Web").
         if (!editor->sentInitial)
         {
+          editor->webView->evaluateJavascript("window.CDPNativeDragOut = true;");
           editor->webView->evaluateJavascript("if (window.CDPSetAppName) window.CDPSetAppName('CDP');");
           for (std::size_t i = 0; i < CDPPlugin::parameterCount(); ++i)
             pushParameterToJS(*editor, i, getParameterValue(i));
@@ -213,6 +395,16 @@ void CDPPlugin::destroyEditor()
   @autoreleasepool
   {
     auto* editor = static_cast<CDPPluginEditor*>(mEditorView);
+
+    if (editor->mouseDownMonitor)
+      [NSEvent removeMonitor:editor->mouseDownMonitor];
+    editor->mouseDownMonitor = nil;
+    [editor->dragMouseDown release];
+    editor->dragMouseDown = nil;
+    cancelPreparedDrag(*editor);
+    editor->dragSource.editor = nullptr;
+    [editor->dragSource release];
+    editor->dragSource = nil;
 
     // Stop the poll timer before tearing down the WebView so its callback can't
     // fire against a half-destroyed view.

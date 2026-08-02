@@ -14,6 +14,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -337,6 +340,58 @@ public:
     mStaging = nullptr;
     mStagingBytePos = 0;
     mStagingTotalBytes = 0;
+  }
+
+  // Message thread: write the last web-rendered sample as an interleaved IEEE
+  // float WAV for a platform drag session. The saved copy is deliberately used
+  // instead of mpCurrent, which belongs exclusively to the audio thread.
+  bool writeRenderedSampleWav(const std::filesystem::path& path) const
+  {
+    const auto buffer = mSavedBuffer;
+    if (!buffer || buffer->numChans <= 0 || buffer->numFrames <= 0
+        || buffer->data.size() != static_cast<std::size_t>(buffer->numChans) * buffer->numFrames)
+      return false;
+
+    const std::uint64_t dataBytes64 = static_cast<std::uint64_t>(buffer->numChans)
+                                    * static_cast<std::uint64_t>(buffer->numFrames) * sizeof(float);
+    if (dataBytes64 > std::numeric_limits<std::uint32_t>::max() - 36u)
+      return false;  // classic RIFF/WAV has 32-bit chunk lengths
+
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out)
+      return false;
+
+    const auto writeU16 = [&out](std::uint16_t value)
+    {
+      const char bytes[2] = { static_cast<char>(value), static_cast<char>(value >> 8) };
+      out.write(bytes, sizeof(bytes));
+    };
+    const auto writeU32 = [&out](std::uint32_t value)
+    {
+      const char bytes[4] = { static_cast<char>(value), static_cast<char>(value >> 8),
+                              static_cast<char>(value >> 16), static_cast<char>(value >> 24) };
+      out.write(bytes, sizeof(bytes));
+    };
+
+    const auto dataBytes = static_cast<std::uint32_t>(dataBytes64);
+    const auto sampleRate = static_cast<std::uint32_t>(std::clamp(
+      std::llround(buffer->sampleRate), 1ll,
+      static_cast<long long>(std::numeric_limits<std::uint32_t>::max())));
+    const auto blockAlign = static_cast<std::uint16_t>(buffer->numChans * sizeof(float));
+    out.write("RIFF", 4); writeU32(36u + dataBytes); out.write("WAVE", 4);
+    out.write("fmt ", 4); writeU32(16); writeU16(3);  // WAVE_FORMAT_IEEE_FLOAT
+    writeU16(static_cast<std::uint16_t>(buffer->numChans));
+    writeU32(sampleRate); writeU32(sampleRate * blockAlign);
+    writeU16(blockAlign); writeU16(32);
+    out.write("data", 4); writeU32(dataBytes);
+
+    for (int frame = 0; frame < buffer->numFrames; ++frame)
+      for (int channel = 0; channel < buffer->numChans; ++channel)
+      {
+        const float value = buffer->data[static_cast<std::size_t>(channel) * buffer->numFrames + frame];
+        out.write(reinterpret_cast<const char*>(&value), sizeof(value));
+      }
+    return out.good();
   }
 
   // Web-keyboard MIDI (message thread): decode a raw 3-byte message into a

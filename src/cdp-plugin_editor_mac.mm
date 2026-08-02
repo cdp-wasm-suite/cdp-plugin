@@ -196,6 +196,10 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
 
   @autoreleasepool
   {
+    // A WebView never survives editor close/reopen. Queue the plugin's current
+    // graph shadow for this fresh JS document, even when no DAW state load occurred.
+    queueGraphForEditor();
+
     auto* editor = new CDPPluginEditor();
 
     choc::ui::WebView::Options opts;
@@ -331,7 +335,7 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
         if (!editor->sentInitial)
         {
           editor->webView->evaluateJavascript("window.CDPNativeDragOut = true;");
-          editor->webView->evaluateJavascript("if (window.CDPSetAppName) window.CDPSetAppName('CDP');");
+          editor->webView->evaluateJavascript("if (window.CDPSetAppName) window.CDPSetAppName('cdp-plugin');");
           for (std::size_t i = 0; i < CDPPlugin::parameterCount(); ++i)
             pushParameterToJS(*editor, i, getParameterValue(i));
           editor->sentInitial = true;
@@ -343,11 +347,18 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
         std::string graphJson;
         if (takePendingGraph(graphJson))
         {
-          std::ostringstream gjs;
-          gjs.imbue(std::locale::classic());
-          gjs << "if (window.CDPLoadGraph) window.CDPLoadGraph(\""
-              << choc::base64::encodeToString(graphJson.data(), graphJson.size()) << "\");";
-          editor->webView->evaluateJavascript(gjs.str());
+          if (graphJson.empty())
+          {
+            editor->webView->evaluateJavascript("if (window.CDPNoGraph) window.CDPNoGraph();");
+          }
+          else
+          {
+            std::ostringstream gjs;
+            gjs.imbue(std::locale::classic());
+            gjs << "if (window.CDPLoadGraph) window.CDPLoadGraph(\""
+                << choc::base64::encodeToString(graphJson.data(), graphJson.size()) << "\");";
+            editor->webView->evaluateJavascript(gjs.str());
+          }
         }
       }
 

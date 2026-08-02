@@ -214,19 +214,6 @@ public:
     // Push the (possibly host-automated) ADSR into the sampler for this block.
     applyEnvelopeParams();
 
-    // A buffer restored from plugin state (loadCustomState) is handed over on the
-    // main thread via an atomic; adopt it so playback works even headless (project
-    // reload / offline bounce with the editor never opened). Treated exactly like a
-    // freshly streamed buffer below.
-    if (SampleBuffer* fromState = mStateBuffer.exchange(nullptr, std::memory_order_acquire))
-    {
-      SampleBuffer* old = mpCurrent;
-      mpCurrent = fromState;
-      mSampler.SetSample(mpCurrent->data.data(), mpCurrent->numChans, mpCurrent->numFrames, mpCurrent->sampleRate);
-      if (old)
-        mRetire.push(old);
-    }
-
     // Adopt the most recent streamed buffer; retire any older ones we skip past.
     // SetSample() first (it kills all voices, so nothing references the old
     // buffer), then it is safe to hand the old buffer to the retire queue for the
@@ -244,6 +231,26 @@ public:
       SampleBuffer* old = mpCurrent;
       mpCurrent = newest;
       mSampler.SetSample(mpCurrent->data.data(), mpCurrent->numChans, mpCurrent->numFrames, mpCurrent->sampleRate);
+      if (old)
+        mRetire.push(old);
+    }
+
+    // A state restore wins over any web upload that was already queued when the
+    // host loaded the state. An empty buffer is an explicit "no saved audio"
+    // command; nullptr still means that no state change is waiting.
+    if (SampleBuffer* fromState = mStateBuffer.exchange(nullptr, std::memory_order_acquire))
+    {
+      SampleBuffer* old = mpCurrent;
+      const bool hasAudio = fromState->numChans > 0 && fromState->numFrames > 0
+                         && !fromState->data.empty();
+      mpCurrent = hasAudio ? fromState : nullptr;
+      if (hasAudio)
+        mSampler.SetSample(mpCurrent->data.data(), mpCurrent->numChans, mpCurrent->numFrames, mpCurrent->sampleRate);
+      else
+      {
+        mSampler.SetSample(nullptr, 0, 0, mSampleRate);
+        mRetire.push(fromState);  // clear-command marker; free on the message thread
+      }
       if (old)
         mRetire.push(old);
     }
@@ -445,8 +452,19 @@ public:
     mGraphState = std::move(json);
   }
 
-  // Editor poll timer: if a state-restored graph is waiting to be pushed to the UI,
-  // hand it over (once). Returns false when there's nothing pending.
+  // Every WebView is a new, empty JS document. Queue the current native shadow
+  // whenever an editor is created, not only after a DAW state load. An empty
+  // string is meaningful: it tells the UI that this is a new instance and it
+  // should create the default patch.
+  void queueGraphForEditor()
+  {
+    std::lock_guard<std::mutex> lock(mGraphMutex);
+    mPendingGraph = mGraphState;
+    mHasPendingGraph = true;
+  }
+
+  // Editor poll timer: hand a queued graph (from editor creation or DAW state
+  // restore) to the UI once. Returns false when there's nothing pending.
   bool takePendingGraph(std::string& out)
   {
     std::lock_guard<std::mutex> lock(mGraphMutex);
@@ -530,8 +548,13 @@ public:
       mHasPendingGraph = true;
     }
 
-    // Audio: decode into a buffer and hand it to the audio thread for immediate
-    // adoption (see process()); also keep the main-thread copy for re-saving.
+    // Audio: absence is state too. Clear the saved copy up front and always send
+    // the audio thread a command (an empty SampleBuffer means "clear") so loading
+    // a patch with no render cannot leave the previous patch's sample playing.
+    mSavedBuffer.reset();
+    auto* forAudio = new SampleBuffer();
+
+    // Decode a saved render when present; otherwise the empty command remains.
     if (state.hasObjectMember("audio"))
     {
       const auto numChans = static_cast<int>(state["audioNumChans"].getWithDefault<int64_t>(0));
@@ -551,12 +574,13 @@ public:
         buf->data.resize(static_cast<std::size_t>(numChans) * numFrames);
         std::memcpy(buf->data.data(), bytes.data(), bytes.size());
         mSavedBuffer = buf;
-
-        // Hand a copy to the audio thread (single producer: the state thread).
-        auto* forAudio = new SampleBuffer(*buf);
-        delete mStateBuffer.exchange(forAudio, std::memory_order_release);
+        *forAudio = *buf;
       }
     }
+
+    // Single producer: the host state thread. The audio thread adopts this after
+    // draining older web uploads, so the newly loaded state is authoritative.
+    delete mStateBuffer.exchange(forAudio, std::memory_order_release);
   }
 
 private:

@@ -268,6 +268,10 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
 
   HWND parent = static_cast<HWND>(parentView);
 
+  // A WebView never survives editor close/reopen. Queue the plugin's current
+  // graph shadow for this fresh JS document, even when no DAW state load occurred.
+  queueGraphForEditor();
+
   auto editor = std::make_unique<CDPPluginEditor>();
   editor->ole.initialized = SUCCEEDED(OleInitialize(nullptr));
 
@@ -387,7 +391,7 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
         if (e->ole.initialized)
           e->webView->evaluateJavascript("window.CDPNativeDragOut = true;");
         // Rebrand the web app's menu-bar product label (default "CDP for Web").
-        e->webView->evaluateJavascript("if (window.CDPSetAppName) window.CDPSetAppName('CDP');");
+        e->webView->evaluateJavascript("if (window.CDPSetAppName) window.CDPSetAppName('cdp-plugin');");
         for (std::size_t i = 0; i < CDPPlugin::parameterCount(); ++i)
           pushParameterToJS(*e, i, getParameterValue(i));
         e->sentInitial = true;
@@ -399,11 +403,18 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
       std::string graphJson;
       if (takePendingGraph(graphJson))
       {
-        std::ostringstream gjs;
-        gjs.imbue(std::locale::classic());
-        gjs << "if (window.CDPLoadGraph) window.CDPLoadGraph(\""
-            << choc::base64::encodeToString(graphJson.data(), graphJson.size()) << "\");";
-        e->webView->evaluateJavascript(gjs.str());
+        if (graphJson.empty())
+        {
+          e->webView->evaluateJavascript("if (window.CDPNoGraph) window.CDPNoGraph();");
+        }
+        else
+        {
+          std::ostringstream gjs;
+          gjs.imbue(std::locale::classic());
+          gjs << "if (window.CDPLoadGraph) window.CDPLoadGraph(\""
+              << choc::base64::encodeToString(graphJson.data(), graphJson.size()) << "\");";
+          e->webView->evaluateJavascript(gjs.str());
+        }
       }
     }
 

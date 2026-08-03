@@ -1,6 +1,6 @@
 # Composer's Desktop Plug-in
 
-The Composer's Desktop Plug-in is part of the cdp-wasm-suite - a collection of projects built using a new WebAssembly (WASM) port of the legendary Composer's Desktop Project - an amazing toolkit for offline audio processing and sound design that is full of esoteric algorithms not found elsewhere.
+The Composer's Desktop Plug-in is part of the cdp-wasm-suite - a collection of projects built using a new WebAssembly (WASM) port of the Composer's Desktop Project - an amazing toolkit for offline audio processing and sound design that is full of esoteric algorithms not found elsewhere.
 
 Composer's Desktop Plug-in embeds the toolkit with a retro computing-themed node graph editor/patcher, that makes it easy to wire up a network of CDP programs that generate or process audio files, and inspect the input and output waveforms. The output file is rendered into a simple polyphonic sampler for quick and fun musical re-pitching (the realtime aspect) - alternatively save or drag the output file to your DAW. You can quickly import a source sound or use a generator, patch things together, do spectral processing, create modulation using break-point-functions (BPFs).
 

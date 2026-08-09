@@ -89,6 +89,9 @@ public:
   // Output gain plus the amplitude-envelope ADSR. The ADSR ranges match the CDP
   // web app's on-screen faders 1:1 (A/D/R 0..2 s, S 0..1), so the web keyboard's
   // envelope controls map straight onto these parameters with no rescaling.
+  // Repitch is the keyboard's REPITCH toggle as a host parameter: it must live
+  // here (not only in the web app) because host-sequenced MIDI never passes
+  // through the UI, and being a parameter gives it persistence and automation.
   enum ParamIndex : std::size_t
   {
     kParamGain = 0,
@@ -96,10 +99,13 @@ public:
     kParamDecay,
     kParamSustain,
     kParamRelease,
+    kParamRepitch,
     kNumParams
   };
 
   static constexpr std::size_t parameterCount() { return kNumParams; }
+
+  static constexpr std::string_view kRepitchLabels[] = { "Off", "On" };
 
   static constexpr mplug::ParameterInfo parameterInfo(std::size_t index)
   {
@@ -141,6 +147,17 @@ public:
           .minValue = 0.0, .maxValue = 2.0, .defaultValue = 0.05,
           .flags = mplug::ParameterFlags::Automatable,
           .unit = mplug::ParameterUnit::Seconds
+        };
+      case kParamRepitch:
+        // Off (default): every note plays the sample at its native pitch, the
+        // web keyboard's audition behaviour. On: notes repitch chromatically
+        // around the sampler's root key (MIDI 60).
+        return {
+          .name = "Repitch", .shortName = "Rep",
+          .minValue = 0.0, .maxValue = 1.0, .defaultValue = 0.0,
+          .flags = mplug::ParameterFlags::Automatable | mplug::ParameterFlags::Stepped,
+          .unit = mplug::ParameterUnit::Generic,
+          .valueStrings = kRepitchLabels, .valueStringCount = 2
         };
       default:
         return {};
@@ -486,6 +503,7 @@ public:
       case kParamDecay:   return mDecay.load(std::memory_order_relaxed);
       case kParamSustain: return mSustain.load(std::memory_order_relaxed);
       case kParamRelease: return mRelease.load(std::memory_order_relaxed);
+      case kParamRepitch: return mRepitch.load(std::memory_order_relaxed);
       default:            return 0.0;
     }
   }
@@ -499,6 +517,7 @@ public:
       case kParamDecay:   mDecay.store(value, std::memory_order_relaxed); break;
       case kParamSustain: mSustain.store(value, std::memory_order_relaxed); break;
       case kParamRelease: mRelease.store(value, std::memory_order_relaxed); break;
+      case kParamRepitch: mRepitch.store(value, std::memory_order_relaxed); break;
       default: break;
     }
   }
@@ -621,19 +640,26 @@ private:
   // Audio thread: route a decoded MIDI event into the shared sampler.
   void handleMidiEvent(const mplug::MidiEvent& event) noexcept
   {
+    // Repitch off: collapse every note onto the root key so the sample plays at
+    // its native pitch (the same remap the web keyboard applies before its notes
+    // reach us — host-sequenced MIDI must behave identically). Note-offs go
+    // through the same mapping so they release the voice the note-on started.
+    const bool repitch = mRepitch.load(std::memory_order_relaxed) >= 0.5;
+    const auto mapNote = [repitch](int note) { return repitch ? note : cdp::Sampler::kRootKey; };
+
     switch (event.type)
     {
       case mplug::MidiEvent::Type::NoteOn:
       {
         const int velocity = static_cast<int>(std::lround(event.note.velocity * 127.0f));
         if (velocity > 0)
-          mSampler.NoteOn(event.note.note, velocity);
+          mSampler.NoteOn(mapNote(event.note.note), velocity);
         else
-          mSampler.NoteOff(event.note.note);
+          mSampler.NoteOff(mapNote(event.note.note));
         break;
       }
       case mplug::MidiEvent::Type::NoteOff:
-        mSampler.NoteOff(event.note.note);
+        mSampler.NoteOff(mapNote(event.note.note));
         break;
       case mplug::MidiEvent::Type::PitchBend:
         mSampler.SetPitchBend(event.pitchBend.value * kBendRangeSemis);
@@ -660,6 +686,10 @@ private:
   std::atomic<double> mDecay{0.0};
   std::atomic<double> mSustain{1.0};
   std::atomic<double> mRelease{0.05};
+
+  // Chromatic repitch (the keyboard's REPITCH toggle as a parameter; >= 0.5 = on).
+  // Off collapses every note onto the sampler's root key — native-pitch audition.
+  std::atomic<double> mRepitch{0.0};
 
   // The shared sampler DSP core.
   cdp::Sampler mSampler;

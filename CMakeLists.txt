@@ -64,7 +64,7 @@ FetchContent_Declare(mplug
   # bridge and fail to restore plugin state).
   # Bump deliberately when new MPlug features are needed.
   # (No GIT_SHALLOW here: shallow clones only work with branch/tag names.)
-  GIT_TAG        8e30279c1a9a1ad4041e2010370cb7b32388d69f
+  GIT_TAG        8e302790bb884e329766b07ac7ebe9e4a8e4bf04
 )
 
 # Don't build MPlug's own examples/tests when consumed as a dependency

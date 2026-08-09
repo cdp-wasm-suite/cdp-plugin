@@ -1,0 +1,67 @@
+Composer's Desktop Plug-in
+Copyright 2026 Oliver Larkin
+
+This product includes software developed by third parties, listed below. The
+Apache License 2.0 in ./LICENSE covers this repository's OWN work — the C++
+sources under src/, the CMake build, the installer and the resources authored
+here. It does not cover the bundled components below, each of which keeps its
+own terms.
+
+--------------------------------------------------------------------------------
+cdp-web (the plugin GUI)  —  resources/web-dist/
+--------------------------------------------------------------------------------
+
+Copyright 2026 Oliver Larkin
+https://github.com/olilarkin/cdp-web
+
+Fetched at build time by scripts/fetch-web-dist.sh; not committed to this
+repository. Licensed to the public under AGPL-3.0-or-later.
+
+It is embedded here under a separate Apache-2.0 grant made by Oliver Larkin as
+sole copyright holder, recorded in cdp-web's EXCEPTIONS.md. THAT GRANT RUNS TO
+THIS PROJECT ONLY. If you take cdp-web from this repository and use it in
+anything else, you receive it under the AGPL-3.0-or-later, which requires that
+you publish the corresponding source of your version — including, per AGPL §13,
+to users who only reach it over a network.
+
+--------------------------------------------------------------------------------
+Components bundled inside cdp-web
+--------------------------------------------------------------------------------
+
+These are NOT Oliver Larkin's work and are covered by neither the Apache grant
+above nor cdp-web's AGPL. They are used as libraries and remain independently
+replaceable within the bundle, as their licenses require.
+
+  CDP8 WebAssembly modules (*.wasm)
+    Copyright (c) 1983-2023 Trevor Wishart, Richard Dobson, Martin Atkins
+    and Composers Desktop Project Ltd.
+    LGPL-2.1-or-later.  Source: https://github.com/cdp-wasm-suite/CDP8
+    Emscripten loader glue is MIT; the JS API and catalog are MIT.
+
+  FAUST wasm  —  Copyright (C) 2021-2024 GRAME, Centre National de Creation
+    Musicale.  LGPL.  https://github.com/grame-cncm/faustwasm
+
+  Monaco Editor  —  Copyright (c) Microsoft Corporation.  MIT.
+
+  Atari ST fonts  —  see the license file shipped alongside them.
+
+--------------------------------------------------------------------------------
+Plugin format SDKs
+--------------------------------------------------------------------------------
+
+  VST3 SDK  —  Copyright (c) 2025 Steinberg Media Technologies GmbH.  MIT.
+  CLAP  —  MIT.
+  Audio Unit  —  Apple, per the macOS SDK terms.
+
+All three are permissive and impose no reciprocal obligation, so none of them
+constrains how the plugin is licensed or distributed.
+
+--------------------------------------------------------------------------------
+Distribution note
+--------------------------------------------------------------------------------
+
+App Store builds rely on cdp-web's EXCEPTIONS.md: AGPL §10 forbids the
+further restrictions that store terms impose. Note that this exception clears
+Oliver Larkin's copyright only — the LGPL components above belong to CDP Ltd
+and GRAME, and their position on store distribution is a separate question.
+See cdp-web's EXCEPTIONS.md for the detail.

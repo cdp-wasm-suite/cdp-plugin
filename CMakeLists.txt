@@ -57,14 +57,19 @@ FetchContent_Declare(mplug
   # open external URLs in the user's browser instead of navigating the plugin
   # UI away from itself, the AUv2 view-lifetime fix that ties the editor to
   # the Cocoa view, the TARGET guard that makes LINK_LIBRARIES work on
-  # non-Apple platforms, where no AUv2 target exists, and the choc WebView
-  # fix that issues the initial navigation after webviewIsReady, so the
-  # IPlugSendMsg binding reliably exists when index.html's head script runs
-  # on WebView2 — without it, Windows editors could boot without the host
-  # bridge and fail to restore plugin state).
+  # non-Apple platforms, where no AUv2 target exists, and the choc WebView2
+  # first-load fixes: the initial navigation waits for every
+  # AddScriptToExecuteOnDocumentCreated completion, so the IPlugSendMsg
+  # binding is guaranteed to exist when index.html's head script runs —
+  # issuing Navigate() straight after webviewIsReady was not enough, the
+  # injection reliably lost the race and Windows editors booted without the
+  # host bridge and failed to restore plugin state; and host-requested
+  # navigations are exempt from the openExternalLinksInBrowser test, which
+  # otherwise bounced the deferred first load to the user's default browser,
+  # leaving the editor blank).
   # Bump deliberately when new MPlug features are needed.
   # (No GIT_SHALLOW here: shallow clones only work with branch/tag names.)
-  GIT_TAG        8e302790bb884e329766b07ac7ebe9e4a8e4bf04
+  GIT_TAG        4e9e9f5ebdf4c3cb26fbe28eacc0a01cb919ae6b
 )
 
 # Don't build MPlug's own examples/tests when consumed as a dependency

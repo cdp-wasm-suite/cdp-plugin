@@ -55,10 +55,10 @@ FetchContent_Declare(mplug
   # adds WebView file-download support plus the `handleNavigation` /
   # `openExternalLinksInBrowser` options (macOS + Windows) the editor uses to
   # open external URLs in the user's browser instead of navigating the plugin
-  # UI away from itself).
+  # UI away from itself, plus a further choc submodule bump).
   # Bump deliberately when new MPlug features are needed.
   # (No GIT_SHALLOW here: shallow clones only work with branch/tag names.)
-  GIT_TAG        2ad9ce18fcae2839c23ee3929f3eef4c7e15fe88
+  GIT_TAG        de095b70d54ae3e679c853e75cbcf2ed835af831
 )
 
 # Don't build MPlug's own examples/tests when consumed as a dependency

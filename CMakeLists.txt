@@ -45,20 +45,22 @@ include(FetchContent)
 
 FetchContent_Declare(mplug
   GIT_REPOSITORY https://github.com/olilarkin/mplug.git
-  # Pinned to an immutable SHA for reproducible builds (main as of 2026-07-10,
+  # Pinned to an immutable SHA for reproducible builds (main as of 2026-08-09,
   # includes BUNDLE_NAME artifact naming, the AU/AUv3 human-readable VENDOR
   # split, the ARM64EC VST3 bundle-folder + multi-config Windows output-dir
   # fixes, the choc `Options::denyPermissionRequests` flag that lets the
   # WebView2 backend deny prompt-triggering web permissions — e.g. Web MIDI —
   # without a prompt, while keeping clipboard-read allowed for patcher paste,
-  # and the choc submodule bumped to the iPlug3/choc `mplug` branch tip, which
+  # the choc submodule bumped to the iPlug3/choc `mplug` branch tip, which
   # adds WebView file-download support plus the `handleNavigation` /
   # `openExternalLinksInBrowser` options (macOS + Windows) the editor uses to
   # open external URLs in the user's browser instead of navigating the plugin
-  # UI away from itself, plus a further choc submodule bump).
+  # UI away from itself, the AUv2 view-lifetime fix that ties the editor to
+  # the Cocoa view, and the TARGET guard that makes LINK_LIBRARIES work on
+  # non-Apple platforms, where no AUv2 target exists).
   # Bump deliberately when new MPlug features are needed.
   # (No GIT_SHALLOW here: shallow clones only work with branch/tag names.)
-  GIT_TAG        de095b70d54ae3e679c853e75cbcf2ed835af831
+  GIT_TAG        a983345b059dc19aa820087e6b3115750ebc3d99
 )
 
 # Don't build MPlug's own examples/tests when consumed as a dependency

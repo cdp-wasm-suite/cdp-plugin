@@ -24,3 +24,14 @@ Thumbs.db
 __pycache__/
 *.pyc
 *.p8
+
+# Plugin GUI — fetched from the @cdp-wasm-suite/cdp-web package, not committed
+# (scripts/fetch-web-dist.sh)
+resources/web-dist/
+
+# Machine-local Makefile overrides (MPLUG_SRC, ...)
+local.mk
+
+# Maintainer tooling only (npm run vendor:sampler) — the C++ build needs none of it.
+node_modules/
+package-lock.json

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(ComposersDesktopPlugin
-  VERSION 0.1.2
+project(CDPPlugin
+  VERSION 0.2.0
   DESCRIPTION "Composer's Desktop Plug-in"
   LANGUAGES CXX C
 )
@@ -45,15 +45,22 @@ include(FetchContent)
 
 FetchContent_Declare(mplug
   GIT_REPOSITORY https://github.com/olilarkin/mplug.git
-  # Pinned to an immutable SHA for reproducible builds (main as of 2026-07-05,
+  # Pinned to an immutable SHA for reproducible builds (main as of 2026-08-09,
   # includes BUNDLE_NAME artifact naming, the AU/AUv3 human-readable VENDOR
   # split, the ARM64EC VST3 bundle-folder + multi-config Windows output-dir
-  # fixes, and the choc `Options::denyPermissionRequests` flag that lets the
+  # fixes, the choc `Options::denyPermissionRequests` flag that lets the
   # WebView2 backend deny prompt-triggering web permissions — e.g. Web MIDI —
-  # without a prompt, while keeping clipboard-read allowed for patcher paste).
+  # without a prompt, while keeping clipboard-read allowed for patcher paste,
+  # the choc submodule bumped to the iPlug3/choc `mplug` branch tip, which
+  # adds WebView file-download support plus the `handleNavigation` /
+  # `openExternalLinksInBrowser` options (macOS + Windows) the editor uses to
+  # open external URLs in the user's browser instead of navigating the plugin
+  # UI away from itself, the AUv2 view-lifetime fix that ties the editor to
+  # the Cocoa view, and the TARGET guard that makes LINK_LIBRARIES work on
+  # non-Apple platforms, where no AUv2 target exists).
   # Bump deliberately when new MPlug features are needed.
   # (No GIT_SHALLOW here: shallow clones only work with branch/tag names.)
-  GIT_TAG        0c377714021f744fb2dba0bbf01a457e6aef3899
+  GIT_TAG        a983345b059dc19aa820087e6b3115750ebc3d99
 )
 
 # Don't build MPlug's own examples/tests when consumed as a dependency
@@ -64,19 +71,21 @@ FetchContent_MakeAvailable(mplug)
 
 # ----------------------------------------------------------------------------
 # Native plugin formats (skipped when building WebAssembly/WCLAP via Emscripten).
-# Produces: ComposersDesktopPluginClap, ComposersDesktopPluginVST3, ComposersDesktopPluginAUv2 (macOS), ComposersDesktopPluginApp.
-# (The Cli and Python targets are defined but excluded from the default build —
-# see EXCLUDE_FROM_ALL below; headless formats are irrelevant for this
-# WebView-based plugin.)
+# Produces: CDPPluginClap, CDPPluginVST3, CDPPluginAUv2 (macOS).
+# (The App, Cli and Python targets are defined but excluded from the default
+# build — see EXCLUDE_FROM_ALL below. The standalone niche is served by the
+# cdp-web app; App stays buildable by name as the dev smoke-test harness.)
 #
 # The plugin GUI is a CHOC WebView. Embedding it into a plugin host's window is
 # implemented for macOS (WKWebView) and Windows (WebView2); the Linux stub
-# returns nullptr (hosts show their generic parameter UI). The standalone App
-# provides the full webview UI on all three platforms.
+# returns nullptr (hosts show their generic parameter UI). Standalone use is
+# served by the cdp-web app (https://cdp-web.app), not a shipped App target.
 #
-# The GUI is the CDP web app (cdp-web), bundled as prebuilt assets under
-# resources/web-dist/ and copied into each format's Contents/Resources/web at
-# build time (see the resource-copy section after mplug_add_plugin below). At
+# The GUI is the CDP web app (cdp-web), consumed as the @cdp-wasm-suite/cdp-web
+# npm package (GitHub Packages): scripts/fetch-web-dist.sh unpacks it into
+# resources/web-dist/ (gitignored), and it is copied into each format's
+# Contents/Resources/web at build time (see the resource-copy section after
+# mplug_add_plugin below). At
 # runtime the editor serves those files in-process via CHOC's fetchResource
 # callback. For live-reload development against the cdp-web dev server, set
 # -DMY_PLUGIN_EDITOR_DEV_SERVER=ON (loads http://localhost:8000/ instead).
@@ -93,10 +102,10 @@ if(MY_PLUGIN_APPLE_EMBEDDED)
   # ---- iOS / visionOS: AUv3 app extension only (requires -G Xcode) ----
   include(MPlugAUv3)
 
-  mplug_add_auv3(ComposersDesktopPluginAUv3
-    PLUGIN_CLASS ComposersDesktopPlugin
+  mplug_add_auv3(CDPPluginAUv3
+    PLUGIN_CLASS CDPPlugin
     DISPLAY_NAME "cdp-plugin"
-    PLUGIN_HEADER src/composers_desktop_plugin.h
+    PLUGIN_HEADER src/cdp-plugin.h
     IDENTIFIER "com.olilarkin.cdp"
     SUBTYPE "CDPl"
     MANUFACTURER "oliL"
@@ -104,7 +113,7 @@ if(MY_PLUGIN_APPLE_EMBEDDED)
     TYPE "aumu"
     VERSION "${PROJECT_VERSION}"
     DESCRIPTION "CDP sampler instrument"
-    SOURCES src/composers_desktop_plugin.cpp
+    SOURCES src/cdp-plugin.cpp
   )
 
 elseif(NOT EMSCRIPTEN)
@@ -116,21 +125,20 @@ elseif(NOT EMSCRIPTEN)
   # (The old resources/web/editor.html → EmbedWebResource.cmake → myplugin::editorHTML()
   # embed pipeline has been removed: the editor now serves the vendored CDP web app
   # from resources/web-dist/ in-process via CHOC's fetchResource, so the embedded
-  # HTML string was dead code. See composers_desktop_plugin_editor_resources.h.)
+  # HTML string was dead code. See cdp-plugin_editor_resources.h.)
 
   if(APPLE)
-    set(MY_PLUGIN_EDITOR_SOURCES src/composers_desktop_plugin_editor_mac.mm)
+    set(MY_PLUGIN_EDITOR_SOURCES src/cdp-plugin_editor_mac.mm)
     find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
     find_library(WEBKIT_FRAMEWORK WebKit REQUIRED)
     set(MY_PLUGIN_EDITOR_LIBS ${COCOA_FRAMEWORK} ${WEBKIT_FRAMEWORK})
   elseif(WIN32)
-    set(MY_PLUGIN_EDITOR_SOURCES src/composers_desktop_plugin_editor_win.cpp)
-    # No extra link libraries: choc's WebView2 backend calls CoInitialize (ole32,
-    # part of the MSVC default library set) and loads WebView2Loader.dll /
-    # shlwapi.dll dynamically, so nothing needs naming explicitly here.
-    set(MY_PLUGIN_EDITOR_LIBS)
+    set(MY_PLUGIN_EDITOR_SOURCES src/cdp-plugin_editor_win.cpp)
+    # The editor's native file drag uses the OLE drag loop and asks the Windows
+    # Shell to expose the rendered WAV as an IDataObject.
+    set(MY_PLUGIN_EDITOR_LIBS ole32 shell32 uuid)
   else()
-    set(MY_PLUGIN_EDITOR_SOURCES src/composers_desktop_plugin_editor_generic.cpp)
+    set(MY_PLUGIN_EDITOR_SOURCES src/cdp-plugin_editor_generic.cpp)
     set(MY_PLUGIN_EDITOR_LIBS)
   endif()
 
@@ -142,10 +150,10 @@ elseif(NOT EMSCRIPTEN)
     add_compile_definitions(MY_PLUGIN_EDITOR_DEV_SERVER=1)
   endif()
 
-  mplug_add_plugin(ComposersDesktopPlugin
-    PLUGIN_CLASS ComposersDesktopPlugin
+  mplug_add_plugin(CDPPlugin
+    PLUGIN_CLASS CDPPlugin
     DISPLAY_NAME "cdp-plugin"
-    PLUGIN_HEADER src/composers_desktop_plugin.h
+    PLUGIN_HEADER src/cdp-plugin.h
     PLUGIN_ID "com.olilarkin.cdp"
     VERSION "${PROJECT_VERSION}"
     VENDOR "Oli Larkin"
@@ -158,20 +166,26 @@ elseif(NOT EMSCRIPTEN)
     VST3_CATEGORY "Instrument|Synth"
     APP_NAME "cdp-plugin"
     SOURCES
-      src/composers_desktop_plugin.h
-      src/composers_desktop_plugin.cpp
+      src/cdp-plugin.h
+      src/cdp-plugin.cpp
     EDITOR_SOURCES
       ${MY_PLUGIN_EDITOR_SOURCES}
     LINK_LIBRARIES
       ${MY_PLUGIN_EDITOR_LIBS}
   )
 
-  # mplug_add_plugin has no per-format opt-out for the headless Cli/Python
-  # formats, so drop them from the default build here (targets stay defined and
-  # can still be built by name if ever needed).
-  foreach(_headless Cli Python)
-    if(TARGET ComposersDesktopPlugin${_headless})
-      set_target_properties(ComposersDesktopPlugin${_headless}
+  # mplug_add_plugin has no per-format opt-out, so drop the unwanted formats
+  # from the default build here (targets stay defined and can still be built by
+  # name if ever needed). Cli/Python are headless and irrelevant for this
+  # WebView-based plugin. App is deliberately not shipped: for standalone use we
+  # point people at the cdp-web app (https://cdp-web.app) instead — but the
+  # target remains buildable by name because its --screenshot flag is the
+  # headless editor smoke test used in development:
+  #   cmake --build build/release --target CDPPluginAppWebResources
+  # (builds the App and copies the web assets into its bundle).
+  foreach(_excluded Cli Python App)
+    if(TARGET CDPPlugin${_excluded})
+      set_target_properties(CDPPlugin${_excluded}
         PROPERTIES EXCLUDE_FROM_ALL TRUE)
     endif()
   endforeach()
@@ -196,17 +210,17 @@ elseif(NOT EMSCRIPTEN)
   #     --app-icon AppIcon --platform macosx --minimum-deployment-target 10.15 \
   #     --output-partial-info-plist "$(mktemp)" --output-format human-readable-text
   # --------------------------------------------------------------------------
-  if(APPLE AND TARGET ComposersDesktopPluginApp)
+  if(APPLE AND TARGET CDPPluginApp)
     set(MY_PLUGIN_MAC_ICON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/resources/mac-icon)
     if(EXISTS ${MY_PLUGIN_MAC_ICON_DIR}/AppIcon.icns)
-      set(_app_res "$<TARGET_BUNDLE_CONTENT_DIR:ComposersDesktopPluginApp>/Resources")
-      add_custom_command(TARGET ComposersDesktopPluginApp POST_BUILD
+      set(_app_res "$<TARGET_BUNDLE_CONTENT_DIR:CDPPluginApp>/Resources")
+      add_custom_command(TARGET CDPPluginApp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E rm -f "${_app_res}/mac.icns"
         COMMAND ${CMAKE_COMMAND} -E copy
           "${MY_PLUGIN_MAC_ICON_DIR}/AppIcon.icns" "${_app_res}/AppIcon.icns"
         COMMAND ${CMAKE_COMMAND} -E copy
           "${MY_PLUGIN_MAC_ICON_DIR}/Assets.car" "${_app_res}/Assets.car"
-        COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:ComposersDesktopPluginApp>"
+        COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:CDPPluginApp>"
         COMMENT "Installing macOS app icon (AppIcon.icns + Assets.car) into cdp-plugin.app"
         VERBATIM)
     else()
@@ -224,12 +238,12 @@ elseif(NOT EMSCRIPTEN)
   # README). Compiling a .rc that references it as ICON id 1 makes Explorer / the
   # taskbar show it for cdp-plugin.exe. (MSVC compiles .rc sources automatically.)
   # --------------------------------------------------------------------------
-  if(WIN32 AND TARGET ComposersDesktopPluginApp)
+  if(WIN32 AND TARGET CDPPluginApp)
     set(MY_PLUGIN_ICO_PATH "${CMAKE_CURRENT_SOURCE_DIR}/resources/cdp-plugin.ico")
     if(EXISTS "${MY_PLUGIN_ICO_PATH}")
       configure_file("${CMAKE_CURRENT_SOURCE_DIR}/resources/app-icon.rc.in"
                      "${CMAKE_CURRENT_BINARY_DIR}/app-icon.rc" @ONLY)
-      target_sources(ComposersDesktopPluginApp PRIVATE
+      target_sources(CDPPluginApp PRIVATE
                      "${CMAKE_CURRENT_BINARY_DIR}/app-icon.rc")
     else()
       message(WARNING "resources/cdp-plugin.ico not found — the Windows App .exe "
@@ -248,14 +262,14 @@ elseif(NOT EMSCRIPTEN)
   # CLI output (--list-devices etc.) run from a terminal no longer prints — this
   # app is GUI-first on Windows; --screenshot/headless still work (they write files).
   # --------------------------------------------------------------------------
-  if(MSVC AND TARGET ComposersDesktopPluginApp)
-    target_link_options(ComposersDesktopPluginApp PRIVATE
+  if(MSVC AND TARGET CDPPluginApp)
+    target_link_options(CDPPluginApp PRIVATE
       "/SUBSYSTEM:WINDOWS" "/ENTRY:mainCRTStartup")
   endif()
 
   # --------------------------------------------------------------------------
   # Copy the bundled CDP web app next to / into each format so the editor can
-  # serve it offline (see composers_desktop_plugin_editor_resources.h). Skipped
+  # serve it offline (see cdp-plugin_editor_resources.h). Skipped
   # when developing against the dev server.
   #
   #   * macOS  — every format is a bundle; the assets ride inside
@@ -272,8 +286,8 @@ elseif(NOT EMSCRIPTEN)
     if(NOT EXISTS ${MY_PLUGIN_WEB_DIST}/index.html)
       message(WARNING
         "resources/web-dist/index.html not found — the editor will fall back to "
-        "the dev server. Build cdp-web (npm run bundle) and vendor its dist/bundle/ "
-        "into resources/web-dist/, or configure with -DMY_PLUGIN_EDITOR_DEV_SERVER=ON.")
+        "the dev server. Fetch the GUI package with scripts/fetch-web-dist.sh "
+        "(@cdp-wasm-suite/cdp-web), or configure with -DMY_PLUGIN_EDITOR_DEV_SERVER=ON.")
     endif()
     # Track the vendored web files so the copy re-runs whenever they change — not
     # just when the format target relinks. A plain TARGET POST_BUILD step only fires
@@ -285,7 +299,7 @@ elseif(NOT EMSCRIPTEN)
 
   if(APPLE AND NOT MY_PLUGIN_EDITOR_DEV_SERVER)
     foreach(_fmt VST3 Clap AUv2 App)
-      set(_tgt ComposersDesktopPlugin${_fmt})
+      set(_tgt CDPPlugin${_fmt})
       if(TARGET ${_tgt})
         set(_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_tgt}.webcopy.stamp")
         # Stamp-driven copy: runs after the bundle is built (DEPENDS ${_tgt}) and
@@ -308,7 +322,15 @@ elseif(NOT EMSCRIPTEN)
           DEPENDS ${_tgt} ${MY_PLUGIN_WEB_DIST_FILES}
           COMMENT "Copying CDP web app into ${_tgt} bundle (Resources/web)"
           VERBATIM)
-        add_custom_target(${_tgt}WebResources ALL DEPENDS ${_stamp})
+        # App is excluded from the default build (see EXCLUDE_FROM_ALL above), so
+        # its copy target must not be ALL — that would drag the App back into
+        # every build. Building CDPPluginAppWebResources by name builds the App
+        # AND copies the web assets, so it is the dev smoke-test entry point.
+        if(_fmt STREQUAL "App")
+          add_custom_target(${_tgt}WebResources DEPENDS ${_stamp})
+        else()
+          add_custom_target(${_tgt}WebResources ALL DEPENDS ${_stamp})
+        endif()
       endif()
     endforeach()
   elseif(WIN32 AND NOT MY_PLUGIN_EDITOR_DEV_SERVER)
@@ -328,9 +350,9 @@ elseif(NOT EMSCRIPTEN)
     # (target ; destination) pairs — destinations differ per format, so drive it
     # from an explicit list rather than the macOS genex loop.
     set(_win_web_targets
-      "ComposersDesktopPluginVST3"  "${_out}/cdp-plugin.vst3/Contents/Resources/web"
-      "ComposersDesktopPluginApp"   "${_out}/web"
-      "ComposersDesktopPluginClap"  "${_out}/cdp-plugin.web")
+      "CDPPluginVST3"  "${_out}/cdp-plugin.vst3/Contents/Resources/web"
+      "CDPPluginApp"   "${_out}/web"
+      "CDPPluginClap"  "${_out}/cdp-plugin.web")
     list(LENGTH _win_web_targets _n)
     math(EXPR _last "${_n} - 1")
     foreach(_i RANGE 0 ${_last} 2)
@@ -356,17 +378,17 @@ endif()
 if(MPLUG_BUILD_WCLAP)
   include(MPlugWClap)
 
-  mplug_add_wclap(ComposersDesktopPluginWClap
-    PLUGIN_CLASS ComposersDesktopPlugin
+  mplug_add_wclap(CDPPluginWClap
+    PLUGIN_CLASS CDPPlugin
     BUNDLE_NAME "cdp-plugin"
-    PLUGIN_HEADER src/composers_desktop_plugin.h
+    PLUGIN_HEADER src/cdp-plugin.h
     PLUGIN_ID "com.olilarkin.cdp"
     VENDOR "Oli Larkin"
     VERSION "${PROJECT_VERSION}"
     DESCRIPTION "CDP sampler instrument"
     FEATURES "instrument" "sampler" "synthesizer" "stereo"
     SOURCES
-      src/composers_desktop_plugin.h
-      src/composers_desktop_plugin.cpp
+      src/cdp-plugin.h
+      src/cdp-plugin.cpp
   )
 endif()

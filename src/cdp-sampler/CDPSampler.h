@@ -3,15 +3,12 @@
 // CDPSampler — a small, framework-agnostic polyphonic one-shot sampler.
 //
 // This is the single source of truth for the CDP sampler DSP, shared by:
-//   - the iPlug2 CDPlugin (C++, included directly — see CDPlugin_DSP.h), and
-//   - the cdp-web standalone app (compiled to WASM and run in an
+//   - the cdp-plugin (C++, included directly — see CDPlugin_DSP.h), and
+//   - the cdp-web app (compiled to WASM and run in an
 //     AudioWorklet — see src/cdp_sampler_wasm.cpp).
 //
 // It owns the whole instrument: a fixed voice pool, note routing / voice
-// allocation, and 4-point cubic-Hermite (Catmull-Rom) interpolation. It has NO
-// dependency on iPlug2 (its MidiSynth / VoiceAllocator were the inspiration, not
-// a dependency) and no heap allocation of its own — the caller owns the sample
-// memory and only passes a borrowed planar pointer.
+// allocation, and 4-point cubic-Hermite (Catmull-Rom) interpolation.
 //
 // Pitch convention: MIDI note 60 plays the sample at native speed; each semitone
 // is a 2^(1/12) playback-rate step, then scaled by sampleRate / hostRate.

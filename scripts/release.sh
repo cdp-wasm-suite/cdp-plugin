@@ -35,7 +35,7 @@ echo "Releasing $CUR -> $VERSION  (tag $TAG)"
 
 # --- bump, commit, tag, push -------------------------------------------------
 # Only the project() VERSION line (line ~4), not cmake_minimum_required etc.
-perl -0pi -e "s/(project\(ComposersDesktopPlugin\s*\n\s*VERSION )\Q$CUR\E/\${1}$VERSION/" CMakeLists.txt
+perl -0pi -e "s/(project\(CDPPlugin\s*\n\s*VERSION )\Q$CUR\E/\${1}$VERSION/" CMakeLists.txt
 grep -qE "VERSION $VERSION\b" CMakeLists.txt || { echo "error: failed to update PROJECT_VERSION in CMakeLists.txt." >&2; exit 1; }
 
 git add CMakeLists.txt

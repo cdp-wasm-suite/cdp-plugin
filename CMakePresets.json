@@ -76,7 +76,7 @@
     {
       "name": "xcode",
       "displayName": "Xcode (macOS, incl. AUv3)",
-      "description": "Generates build/xcode/ComposersDesktopPlugin.xcodeproj - open it in Xcode for AUv3 development",
+      "description": "Generates build/xcode/CDPPlugin.xcodeproj - open it in Xcode for AUv3 development",
       "inherits": "apple-xcode-base",
       "cacheVariables": {
         "MPLUG_BUILD_AUV3": "ON"
@@ -85,7 +85,7 @@
     {
       "name": "ios",
       "displayName": "iOS (AUv3)",
-      "description": "Generates build/ios/ComposersDesktopPlugin.xcodeproj targeting iOS - open it to run the AUv3 on a device/simulator",
+      "description": "Generates build/ios/CDPPlugin.xcodeproj targeting iOS - open it to run the AUv3 on a device/simulator",
       "inherits": "apple-xcode-base",
       "cacheVariables": {
         "CMAKE_SYSTEM_NAME": "iOS",
@@ -95,7 +95,7 @@
     {
       "name": "visionos",
       "displayName": "visionOS (AUv3)",
-      "description": "Generates build/visionos/ComposersDesktopPlugin.xcodeproj targeting visionOS",
+      "description": "Generates build/visionos/CDPPlugin.xcodeproj targeting visionOS",
       "inherits": "apple-xcode-base",
       "cacheVariables": {
         "CMAKE_SYSTEM_NAME": "visionOS",

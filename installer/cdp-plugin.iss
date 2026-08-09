@@ -14,7 +14,7 @@
 ; The installer lays down a single shared copy of the ~20 MB web app under
 ; Common Files and strips the per-format embedded copy from the VST3 bundle;
 ; every installed format then resolves the shared copy through the editor's
-; resource-candidate list (see composers_desktop_plugin_editor_resources.h).
+; resource-candidate list (see cdp-plugin_editor_resources.h).
 ;
 ; Code signing is deferred — SmartScreen will warn on this unsigned installer.
 
@@ -45,8 +45,8 @@ AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
-; The plug-ins install to fixed Common Files locations; only the standalone App
-; uses DefaultDirName, so keep the dir page but don't force it on the user.
+; The plug-ins install to fixed Common Files locations; {app} only holds the
+; docs and the uninstaller, so don't force the dir page on the user.
 DisableProgramGroupPage=yes
 ArchitecturesAllowed={#ArchAllowed}
 ArchitecturesInstallIn64BitMode={#ArchAllowed}
@@ -56,8 +56,8 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName={#AppName} ({#ArchTag})
-; Installer/uninstaller wizard icon (the same artwork as the app exe). Path is
-; relative to this .iss (installer/ -> ../resources).
+; Installer/uninstaller wizard icon. Path is relative to this .iss
+; (installer/ -> ../resources).
 SetupIconFile=..\resources\cdp-plugin.ico
 ; License page shown before install (plain text, same dir as this .iss).
 LicenseFile=license.txt
@@ -65,7 +65,6 @@ LicenseFile=license.txt
 [Components]
 Name: "vst3"; Description: "VST3 plug-in"; Types: full custom
 Name: "clap"; Description: "CLAP plug-in"; Types: full custom
-Name: "app";  Description: "Standalone application"; Types: full custom
 
 [InstallDelete]
 ; If a previous self-contained-zip install left an embedded web copy in the VST3
@@ -86,15 +85,11 @@ Source: "{#SourceDir}\cdp-plugin.vst3\*"; DestDir: "{commoncf}\VST3\cdp-plugin.v
 Source: "{#SourceDir}\cdp-plugin.clap"; DestDir: "{commoncf}\CLAP"; \
   Flags: ignoreversion; Components: clap
 
-; Standalone App -> Program Files\cdp-plugin.
-Source: "{#SourceDir}\cdp-plugin.exe"; DestDir: "{app}"; \
-  Flags: ignoreversion; Components: app
-
 ; Shared web assets -> Common Files\Oli Larkin\cdp-plugin\web. The space-separated
 ; component list means "install when any of these components is selected", so the
 ; shared copy lands whenever at least one format is chosen.
 Source: "{#SourceDir}\web\*"; DestDir: "{commoncf}\{#AppPublisher}\cdp-plugin\web"; \
-  Flags: recursesubdirs createallsubdirs ignoreversion; Components: vst3 clap app
+  Flags: recursesubdirs createallsubdirs ignoreversion; Components: vst3 clap
 
 ; Docs -> Program Files\cdp-plugin ({app} is always created, even for a
 ; plugins-only install, since it holds the uninstaller). readme.txt gets the
@@ -102,18 +97,12 @@ Source: "{#SourceDir}\web\*"; DestDir: "{commoncf}\{#AppPublisher}\cdp-plugin\we
 Source: "readme-win.txt"; DestDir: "{app}"; DestName: "readme.txt"; Flags: isreadme ignoreversion
 Source: "license.txt";    DestDir: "{app}"; Flags: ignoreversion
 
-[Icons]
-; Only the App component gets a Start-menu entry, so a plugins-only install
-; creates no Start-menu group. No uninstall shortcut — modern Windows expects
-; uninstalls via Apps & Features, and Inno still registers the ARP entry there.
-Name: "{group}\{#AppName}"; Filename: "{app}\cdp-plugin.exe"; Components: app
-
 [UninstallDelete]
 ; Remove the shared support dir (and its parent, if left empty) on uninstall.
 Type: filesandordirs; Name: "{commoncf}\{#AppPublisher}\cdp-plugin"
 Type: dirifempty;     Name: "{commoncf}\{#AppPublisher}"
 ; Force-remove the VST3 bundle dir, but ONLY when we installed the VST3
-; component — otherwise a CLAP/App-only uninstall could delete a VST3 the user
+; component — otherwise a CLAP-only uninstall could delete a VST3 the user
 ; placed there manually from the self-contained zip. (Inno's uninstall log also
 ; removes the files it installed; this just guarantees the dir goes too.)
 Type: filesandordirs; Name: "{commoncf}\VST3\cdp-plugin.vst3"; Components: vst3

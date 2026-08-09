@@ -3,13 +3,11 @@ Composer's Desktop Plug-in (cdp-plugin)
 
 Thanks for downloading Composer's Desktop Plug-in.
 
-This disk image contains the plug-ins and the standalone application. Drag each
-item into the matching folder:
+This disk image contains the plug-ins. Drag each item into the matching folder:
 
   cdp-plugin.vst3       ->  /Library/Audio/Plug-Ins/VST3
   cdp-plugin.clap       ->  /Library/Audio/Plug-Ins/CLAP
   cdp-plugin.component  ->  /Library/Audio/Plug-Ins/Components   (Audio Unit)
-  cdp-plugin.app        ->  /Applications
 
 To install for the current user only, use the equivalent folders under your home
 directory instead, e.g. ~/Library/Audio/Plug-Ins/VST3.
@@ -17,8 +15,10 @@ directory instead, e.g. ~/Library/Audio/Plug-Ins/VST3.
 After installing the Audio Unit you may need to restart your DAW (or log out and
 back in) before it is picked up.
 
-The plug-ins and app are signed and notarized, so they open without Gatekeeper
-warnings.
+The plug-ins are signed and notarized, so they open without Gatekeeper warnings.
+
+For standalone use outside a DAW, use the cdp-web app in your browser instead:
+  https://cdp-web.app
 
 
 KNOWN ISSUES

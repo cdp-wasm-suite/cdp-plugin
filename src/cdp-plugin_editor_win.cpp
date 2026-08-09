@@ -266,6 +266,14 @@ void* CDPPlugin::createEditor(void* parentView, mplug::WindowType windowType)
   if (windowType != mplug::WindowType::Win32)
     return nullptr;
 
+  // Hosts can request a replacement editor before destroying the previous one
+  // (REAPER's AUv2 wrapper does on macOS; guard here too). Never let two editors
+  // coexist: the orphan's poll timer would steal the pending-graph handshake
+  // meant for the new editor and, once the plugin is destroyed, fire into freed
+  // memory.
+  if (mEditorView)
+    destroyEditor();
+
   HWND parent = static_cast<HWND>(parentView);
 
   // A WebView never survives editor close/reopen. Queue the plugin's current

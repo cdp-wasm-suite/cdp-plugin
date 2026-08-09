@@ -69,15 +69,15 @@ FetchContent_MakeAvailable(mplug)
 
 # ----------------------------------------------------------------------------
 # Native plugin formats (skipped when building WebAssembly/WCLAP via Emscripten).
-# Produces: CDPPluginClap, CDPPluginVST3, CDPPluginAUv2 (macOS), CDPPluginApp.
-# (The Cli and Python targets are defined but excluded from the default build —
-# see EXCLUDE_FROM_ALL below; headless formats are irrelevant for this
-# WebView-based plugin.)
+# Produces: CDPPluginClap, CDPPluginVST3, CDPPluginAUv2 (macOS).
+# (The App, Cli and Python targets are defined but excluded from the default
+# build — see EXCLUDE_FROM_ALL below. The standalone niche is served by the
+# cdp-web app; App stays buildable by name as the dev smoke-test harness.)
 #
 # The plugin GUI is a CHOC WebView. Embedding it into a plugin host's window is
 # implemented for macOS (WKWebView) and Windows (WebView2); the Linux stub
-# returns nullptr (hosts show their generic parameter UI). The standalone App
-# provides the full webview UI on all three platforms.
+# returns nullptr (hosts show their generic parameter UI). Standalone use is
+# served by the cdp-web app (https://cdp-web.app), not a shipped App target.
 #
 # The GUI is the CDP web app (cdp-web), consumed as the @cdp-wasm-suite/cdp-web
 # npm package (GitHub Packages): scripts/fetch-web-dist.sh unpacks it into
@@ -172,12 +172,18 @@ elseif(NOT EMSCRIPTEN)
       ${MY_PLUGIN_EDITOR_LIBS}
   )
 
-  # mplug_add_plugin has no per-format opt-out for the headless Cli/Python
-  # formats, so drop them from the default build here (targets stay defined and
-  # can still be built by name if ever needed).
-  foreach(_headless Cli Python)
-    if(TARGET CDPPlugin${_headless})
-      set_target_properties(CDPPlugin${_headless}
+  # mplug_add_plugin has no per-format opt-out, so drop the unwanted formats
+  # from the default build here (targets stay defined and can still be built by
+  # name if ever needed). Cli/Python are headless and irrelevant for this
+  # WebView-based plugin. App is deliberately not shipped: for standalone use we
+  # point people at the cdp-web app (https://cdp-web.app) instead — but the
+  # target remains buildable by name because its --screenshot flag is the
+  # headless editor smoke test used in development:
+  #   cmake --build build/release --target CDPPluginAppWebResources
+  # (builds the App and copies the web assets into its bundle).
+  foreach(_excluded Cli Python App)
+    if(TARGET CDPPlugin${_excluded})
+      set_target_properties(CDPPlugin${_excluded}
         PROPERTIES EXCLUDE_FROM_ALL TRUE)
     endif()
   endforeach()
@@ -314,7 +320,15 @@ elseif(NOT EMSCRIPTEN)
           DEPENDS ${_tgt} ${MY_PLUGIN_WEB_DIST_FILES}
           COMMENT "Copying CDP web app into ${_tgt} bundle (Resources/web)"
           VERBATIM)
-        add_custom_target(${_tgt}WebResources ALL DEPENDS ${_stamp})
+        # App is excluded from the default build (see EXCLUDE_FROM_ALL above), so
+        # its copy target must not be ALL — that would drag the App back into
+        # every build. Building CDPPluginAppWebResources by name builds the App
+        # AND copies the web assets, so it is the dev smoke-test entry point.
+        if(_fmt STREQUAL "App")
+          add_custom_target(${_tgt}WebResources DEPENDS ${_stamp})
+        else()
+          add_custom_target(${_tgt}WebResources ALL DEPENDS ${_stamp})
+        endif()
       endif()
     endforeach()
   elseif(WIN32 AND NOT MY_PLUGIN_EDITOR_DEV_SERVER)

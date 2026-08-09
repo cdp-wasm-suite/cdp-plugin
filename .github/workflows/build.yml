@@ -113,7 +113,7 @@ jobs:
         run: node scripts/vendor-sampler.mjs --check
 
   # ---------------------------------------------------------------------------
-  # macOS — VST3 / AUv2 / CLAP / App
+  # macOS — VST3 / AUv2 / CLAP
   # ---------------------------------------------------------------------------
   macos:
     name: macOS
@@ -166,7 +166,6 @@ jobs:
             build/release/**/*.vst3
             build/release/**/*.clap
             build/release/**/*.component
-            build/release/**/*.app
 
       - name: Install validators
         run: |
@@ -191,7 +190,7 @@ jobs:
         run: ./binaries/clap-validator validate build/release/out/cdp-plugin.clap
 
   # ---------------------------------------------------------------------------
-  # Linux — VST3 / CLAP / App
+  # Linux — VST3 / CLAP
   # ---------------------------------------------------------------------------
   linux:
     name: Linux
@@ -233,7 +232,6 @@ jobs:
           path: |
             build/release/**/*.vst3
             build/release/**/*.clap
-            build/release/out/cdp-plugin
 
       # pluginval's VST3 host reports "0 types found" on Linux (a pluginval
       # limitation - the same VST3 passes pluginval on macOS/Windows), so VST3
@@ -249,7 +247,7 @@ jobs:
         run: ./clap-validator validate build/release/out/cdp-plugin.clap
 
   # ---------------------------------------------------------------------------
-  # Windows — VST3 / CLAP / App
+  # Windows — VST3 / CLAP
   # ---------------------------------------------------------------------------
   windows:
     name: Windows
@@ -290,7 +288,7 @@ jobs:
       # Build the shippable formats explicitly (the headless Cli/Python targets
       # are excluded from the default build in CMakeLists.txt anyway).
       - name: Build
-        run: cmake --build build/windows --target CDPPluginVST3 CDPPluginClap CDPPluginApp
+        run: cmake --build build/windows --target CDPPluginVST3 CDPPluginClap
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -300,7 +298,6 @@ jobs:
           path: |
             build/windows/**/*.vst3
             build/windows/**/*.clap
-            build/windows/**/cdp-plugin.exe
 
       - name: Install validators
         shell: bash
@@ -351,7 +348,7 @@ jobs:
         run: cmake -B build/win-${{ matrix.arch }} -A ${{ matrix.arch }}
 
       - name: Build
-        run: cmake --build build/win-${{ matrix.arch }} --config Release --target CDPPluginVST3 CDPPluginClap CDPPluginApp
+        run: cmake --build build/win-${{ matrix.arch }} --config Release --target CDPPluginVST3 CDPPluginClap
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -361,7 +358,6 @@ jobs:
           path: |
             build/win-${{ matrix.arch }}/**/*.vst3
             build/win-${{ matrix.arch }}/**/*.clap
-            build/win-${{ matrix.arch }}/**/cdp-plugin.exe
 
   # ---------------------------------------------------------------------------
   # AUv3 app extension (macOS, Xcode generator)

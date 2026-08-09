@@ -4,7 +4,7 @@ name: Release
 # pushed tag:
 #   macos    — plugins + app, Developer ID codesigned (hardened runtime),
 #              notarized (notarytool) and stapled, shipped as a DMG
-#   windows  — VST3 / CLAP / App zips for x64, ARM64 and ARM64EC (unsigned)
+#   windows  — VST3 / CLAP zips for x64, ARM64 and ARM64EC (unsigned)
 #   wasm     — the WCLAP (WebAssembly CLAP) zip (disabled by default; gated
 #              behind the CI_WASM repo variable, set to 'false' here)
 # Each job creates the Release if it doesn't exist yet (`gh release create ||
@@ -142,11 +142,7 @@ jobs:
             codesign --force --options runtime --timestamp \
               --sign "$DEVELOPER_ID_APPLICATION" "$plug"
           done
-          # App: same, plus the hardened-runtime entitlements.
-          codesign --force --options runtime --timestamp \
-            --entitlements "$GITHUB_WORKSPACE/resources/entitlements.mac.plist" \
-            --sign "$DEVELOPER_ID_APPLICATION" cdp-plugin.app
-          for item in cdp-plugin.vst3 cdp-plugin.component cdp-plugin.clap cdp-plugin.app; do
+          for item in cdp-plugin.vst3 cdp-plugin.component cdp-plugin.clap; do
             codesign --verify --strict --verbose=2 "$item"
           done
 
@@ -159,12 +155,12 @@ jobs:
           # zip; then staple each original bundle (same cdhash that was notarized)
           # so the plugins/app pass Gatekeeper offline after being copied out.
           mkdir -p "$RUNNER_TEMP/notarize"
-          cp -R cdp-plugin.vst3 cdp-plugin.component cdp-plugin.clap cdp-plugin.app "$RUNNER_TEMP/notarize/"
+          cp -R cdp-plugin.vst3 cdp-plugin.component cdp-plugin.clap "$RUNNER_TEMP/notarize/"
           ditto -c -k --sequesterRsrc "$RUNNER_TEMP/notarize" "$RUNNER_TEMP/bundles.zip"
           xcrun notarytool submit "$RUNNER_TEMP/bundles.zip" \
             --key "$KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
             --wait
-          for item in cdp-plugin.vst3 cdp-plugin.component cdp-plugin.clap cdp-plugin.app; do
+          for item in cdp-plugin.vst3 cdp-plugin.component cdp-plugin.clap; do
             xcrun stapler staple "$item"
           done
 
@@ -172,7 +168,7 @@ jobs:
         run: |
           mkdir -p dmg-staging
           cd build/release/out
-          cp -R cdp-plugin.vst3 cdp-plugin.component cdp-plugin.clap cdp-plugin.app "$GITHUB_WORKSPACE/dmg-staging/"
+          cp -R cdp-plugin.vst3 cdp-plugin.component cdp-plugin.clap "$GITHUB_WORKSPACE/dmg-staging/"
           cd "$GITHUB_WORKSPACE"
           # Drop the readme + license alongside the bundles so they show in the DMG.
           cp installer/readme-mac.txt dmg-staging/README.txt
@@ -207,7 +203,7 @@ jobs:
           gh release upload "${{ github.ref_name }}" cdp-plugin-macOS.dmg --clobber
 
   # ---------------------------------------------------------------------------
-  # Windows — VST3 / CLAP / App zips per architecture (unsigned; ARM64EC lets
+  # Windows — VST3 / CLAP zips per architecture (unsigned; ARM64EC lets
   # the plugin load into x64 hosts on ARM Windows). Same VS-generator builds
   # that build.yml validates.
   # ---------------------------------------------------------------------------
@@ -238,7 +234,7 @@ jobs:
         run: cmake -B build/win-${{ matrix.arch }} -A ${{ matrix.arch }}
 
       - name: Build
-        run: cmake --build build/win-${{ matrix.arch }} --config Release --target CDPPluginVST3 CDPPluginClap CDPPluginApp
+        run: cmake --build build/win-${{ matrix.arch }} --config Release --target CDPPluginVST3 CDPPluginClap
 
       - name: Package
         shell: bash

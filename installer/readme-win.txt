@@ -3,16 +3,18 @@ Composer's Desktop Plug-in (cdp-plugin)
 
 Thanks for installing Composer's Desktop Plug-in.
 
-The plug-ins and the standalone application are ready to use:
+The plug-ins are ready to use:
 
   * VST3  - installed to the shared VST3 folder
             (C:\Program Files\Common Files\VST3)
   * CLAP  - installed to the shared CLAP folder
             (C:\Program Files\Common Files\CLAP)
-  * App   - Start menu -> cdp-plugin
 
 If the plug-in doesn't appear in your DAW straight away, rescan your plug-in
 folders (VST3 / CLAP) from the DAW's preferences.
+
+For standalone use outside a DAW, use the cdp-web app in your browser instead:
+  https://cdp-web.app
 
 
 

@@ -87,8 +87,10 @@ Source: "{#SourceDir}\cdp-plugin.clap"; DestDir: "{commoncf}\CLAP"; \
 
 ; Shared web assets -> Common Files\Oli Larkin\cdp-plugin\web. The space-separated
 ; component list means "install when any of these components is selected", so the
-; shared copy lands whenever at least one format is chosen.
-Source: "{#SourceDir}\web\*"; DestDir: "{commoncf}\{#AppPublisher}\cdp-plugin\web"; \
+; shared copy lands whenever at least one format is chosen. Sourced from the
+; CLAP's sibling web folder (out\cdp-plugin.web) — out\web was the App's and
+; the App is no longer built for releases.
+Source: "{#SourceDir}\cdp-plugin.web\*"; DestDir: "{commoncf}\{#AppPublisher}\cdp-plugin\web"; \
   Flags: recursesubdirs createallsubdirs ignoreversion; Components: vst3 clap
 
 ; Docs -> Program Files\cdp-plugin ({app} is always created, even for a

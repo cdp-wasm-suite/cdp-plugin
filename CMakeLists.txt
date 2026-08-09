@@ -56,11 +56,15 @@ FetchContent_Declare(mplug
   # `openExternalLinksInBrowser` options (macOS + Windows) the editor uses to
   # open external URLs in the user's browser instead of navigating the plugin
   # UI away from itself, the AUv2 view-lifetime fix that ties the editor to
-  # the Cocoa view, and the TARGET guard that makes LINK_LIBRARIES work on
-  # non-Apple platforms, where no AUv2 target exists).
+  # the Cocoa view, the TARGET guard that makes LINK_LIBRARIES work on
+  # non-Apple platforms, where no AUv2 target exists, and the choc WebView
+  # fix that issues the initial navigation after webviewIsReady, so the
+  # IPlugSendMsg binding reliably exists when index.html's head script runs
+  # on WebView2 — without it, Windows editors could boot without the host
+  # bridge and fail to restore plugin state).
   # Bump deliberately when new MPlug features are needed.
   # (No GIT_SHALLOW here: shallow clones only work with branch/tag names.)
-  GIT_TAG        a983345b059dc19aa820087e6b3115750ebc3d99
+  GIT_TAG        8e30279c1a9a1ad4041e2010370cb7b32388d69f
 )
 
 # Don't build MPlug's own examples/tests when consumed as a dependency
